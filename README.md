@@ -467,7 +467,7 @@ lantern/
 │   ├── dns_brute.py     # Async DNS brute forcer
 │   ├── tech_detect.py   # Technology fingerprinting
 │   └── cli.py           # Command-line interface
-├── modules/             # 45 scanner modules
+├── modules/             # 55 scanner modules
 ├── payloads/            # Attack payloads (add your own)
 │   └── learned/         # Auto-generated successful payloads
 └── presets/             # Scan profiles (YAML)
