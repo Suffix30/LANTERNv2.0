@@ -74,6 +74,17 @@ Python 3.10+ required.
 ./lantern -t https://target.com --fast
 ```
 
+## Command Reference
+
+For comprehensive command examples, module combinations, obfuscation techniques, and advanced usage patterns, see the [Commands Expanded Guide](docs/Commands-Expanded.md).
+
+This guide includes:
+- Strategic module combinations for different testing scenarios
+- Obfuscation and WAF bypass techniques
+- Advanced command patterns and creative combinations
+- Complete module reference with common combinations
+- Quick reference for essential patterns
+
 ## Subdomain Brute Force
 
 High-speed async DNS brute force without external tools:
