@@ -65,13 +65,13 @@ Python 3.10+ required.
 ## Quick Start
 
 ```bash
-./lantern -t https://target.com -o report
+lantern -t https://target.com -o report
 
-./lantern -t https://target.com --crawl --deep
+lantern -t https://target.com --crawl --deep
 
-./lantern -t https://target.com -m sqli,xss,ssrf --aggressive
+lantern -t https://target.com -m sqli,xss,ssrf --aggressive
 
-./lantern -t https://target.com --fast
+lantern -t https://target.com --fast
 ```
 
 ## Subdomain Brute Force
@@ -79,11 +79,11 @@ Python 3.10+ required.
 High-speed async DNS brute force without external tools:
 
 ```bash
-./lantern -t https://target.com --dns-brute
+lantern -t https://target.com --dns-brute
 
-./lantern -t https://target.com --dns-brute --dns-concurrency 1000
+lantern -t https://target.com --dns-brute --dns-concurrency 1000
 
-./lantern -t https://target.com --dns-brute --dns-wordlist /path/to/wordlist.txt
+lantern -t https://target.com --dns-brute --dns-wordlist /path/to/wordlist.txt
 ```
 
 Features:
@@ -98,11 +98,11 @@ Features:
 Fingerprint the tech stack and auto-select modules:
 
 ```bash
-./lantern -t https://target.com --tech-detect
+lantern -t https://target.com --tech-detect
 
-./lantern -t https://target.com --smart
+lantern -t https://target.com --smart
 
-./lantern -t https://target.com --smart --exploit
+lantern -t https://target.com --smart --exploit
 ```
 
 The `--smart` flag detects technologies (WordPress, Django, Spring, etc.) and automatically adds relevant modules (sqli, ssti, deserial) to the scan.
@@ -118,11 +118,11 @@ Detection covers:
 Test for LDAP injection and enumerate AD environments:
 
 ```bash
-./lantern -t https://target.com -m ldap
+lantern -t https://target.com -m ldap
 
-./lantern -t https://target.com -m ldap --exploit
+lantern -t https://target.com -m ldap --exploit
 
-./lantern -t https://target.com --chain auth_bypass
+lantern -t https://target.com --chain auth_bypass
 ```
 
 Capabilities:
@@ -138,11 +138,11 @@ Capabilities:
 Aggressive path and file discovery:
 
 ```bash
-./lantern -t https://target.com -m dirbust
+lantern -t https://target.com -m dirbust
 
-./lantern -t https://target.com -m dirbust --aggressive
+lantern -t https://target.com -m dirbust --aggressive
 
-./lantern -t https://target.com --chain enum
+lantern -t https://target.com --chain enum
 ```
 
 Features:
@@ -159,7 +159,7 @@ Features:
 The `--exploit` flag enables automatic exploitation of discovered vulnerabilities:
 
 ```bash
-./lantern -t https://target.com --exploit --deep -o report
+lantern -t https://target.com --exploit --deep -o report
 ```
 
 What exploitation does per module:
@@ -181,7 +181,7 @@ What exploitation does per module:
 For XSS cookie capture, provide a callback server:
 
 ```bash
-./lantern -t https://target.com --exploit -m xss --callback-host your-server.com
+lantern -t https://target.com --exploit -m xss --callback-host your-server.com
 ```
 
 ## Attack Chains
@@ -189,11 +189,11 @@ For XSS cookie capture, provide a callback server:
 Chain modules together to pivot from one finding to another:
 
 ```bash
-./lantern -t https://target.com --chain data_theft
-./lantern -t https://target.com --chain rce
-./lantern -t https://target.com --chain auth_bypass
-./lantern -t https://target.com --chain api_attack
-./lantern -t https://target.com --chain enum
+lantern -t https://target.com --chain data_theft
+lantern -t https://target.com --chain rce
+lantern -t https://target.com --chain auth_bypass
+lantern -t https://target.com --chain api_attack
+lantern -t https://target.com --chain enum
 ```
 
 | Chain | Modules |
@@ -213,7 +213,7 @@ Chain modules together to pivot from one finding to another:
 
 Chains automatically use exploitation data - if SSRF extracts AWS keys, the chain logs the attack path and suggests next steps.
 
-List chains: `./lantern --list-chains`
+List chains: `lantern --list-chains`
 
 ## Modules
 
@@ -229,26 +229,26 @@ List chains: `./lantern --list-chains`
 
 **Business Logic:** payment, race, captcha, account, prototype, dom
 
-**55 modules total.** List all: `./lantern --list`
+**55 modules total.** List all: `lantern --list`
 
 ## Presets
 
 ```bash
-./lantern -t https://target.com --preset fast
-./lantern -t https://target.com --preset api
-./lantern -t https://target.com --preset stealth
-./lantern -t https://target.com --preset thorough
-./lantern -t https://target.com --preset exploit
+lantern -t https://target.com --preset fast
+lantern -t https://target.com --preset api
+lantern -t https://target.com --preset stealth
+lantern -t https://target.com --preset thorough
+lantern -t https://target.com --preset exploit
 ```
 
-List presets: `./lantern --list-presets`
+List presets: `lantern --list-presets`
 
 ## Reports
 
 ```bash
-./lantern -t https://target.com -o report                  # HTML
-./lantern -t https://target.com -o report --format json    # JSON
-./lantern -t https://target.com -o report --format all     # All formats
+lantern -t https://target.com -o report                  # HTML
+lantern -t https://target.com -o report --format json    # JSON
+lantern -t https://target.com -o report --format all     # All formats
 ```
 
 Reports include:
@@ -303,11 +303,11 @@ Reports include:
 Run in CI pipelines with proper exit codes and standardized reports:
 
 ```bash
-./lantern -t https://target.com --ci --fail-on HIGH -o scan_results
+lantern -t https://target.com --ci --fail-on HIGH -o scan_results
 
-./lantern -t https://target.com --ci --sarif results.sarif
+lantern -t https://target.com --ci --sarif results.sarif
 
-./lantern -t https://target.com --ci --junit results.xml
+lantern -t https://target.com --ci --junit results.xml
 ```
 
 **Exit codes:**
@@ -333,11 +333,11 @@ Run in CI pipelines with proper exit codes and standardized reports:
 Control what gets scanned:
 
 ```bash
-./lantern -t https://target.com --include-domain target.com --include-domain api.target.com
+lantern -t https://target.com --include-domain target.com --include-domain api.target.com
 
-./lantern -t urls.txt --exclude-domain logout.target.com --exclude-pattern "/static/"
+lantern -t urls.txt --exclude-domain logout.target.com --exclude-pattern "/static/"
 
-./lantern -t https://target.com --scope-file scope.txt
+lantern -t https://target.com --scope-file scope.txt
 ```
 
 **Scope file format:**
@@ -467,7 +467,7 @@ lantern/
 │   ├── dns_brute.py     # Async DNS brute forcer
 │   ├── tech_detect.py   # Technology fingerprinting
 │   └── cli.py           # Command-line interface
-├── modules/             # 55 scanner modules
+├── modules/             # 45 scanner modules
 ├── payloads/            # Attack payloads (add your own)
 │   └── learned/         # Auto-generated successful payloads
 └── presets/             # Scan profiles (YAML)
