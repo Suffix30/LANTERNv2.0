@@ -1,0 +1,5 @@
+include README.md
+include LICENSE
+include requirements.txt
+recursive-include payloads *.txt
+recursive-include presets *.yml

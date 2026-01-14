@@ -1,0 +1,21 @@
+name: fast
+description: Quick scan with passive checks only
+
+modules:
+  - headers
+  - cors
+  - disclosure
+  - fingerprint
+  - secrets
+  - clickjack
+  - cve
+  - ssl
+  - cookie
+  - dork
+
+config:
+  threads: 100
+  timeout: 5
+  crawl: false
+  aggressive: false
+  stealth: false
