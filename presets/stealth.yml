@@ -1,0 +1,21 @@
+name: stealth
+description: Low-profile scan with randomized timing
+
+modules:
+  - headers
+  - cors
+  - disclosure
+  - fingerprint
+  - secrets
+  - ssl
+  - cookie
+  - cve
+  - subdomain
+
+config:
+  threads: 5
+  timeout: 20
+  crawl: false
+  aggressive: false
+  stealth: true
+  rate_limit: 10

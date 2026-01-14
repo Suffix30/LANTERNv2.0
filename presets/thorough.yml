@@ -1,0 +1,68 @@
+name: thorough
+description: Comprehensive scan with all injection tests
+
+modules:
+  - waf
+  - sqli
+  - xss
+  - ssrf
+  - lfi
+  - ssti
+  - cmdi
+  - xxe
+  - crlf
+  - hpp
+  - ldap
+  - auth
+  - jwt
+  - oauth
+  - mfa
+  - session
+  - cookie
+  - csrf
+  - idor
+  - massassign
+  - cors
+  - api
+  - graphql
+  - websocket
+  - apiver
+  - dom
+  - prototype
+  - clickjack
+  - payment
+  - race
+  - captcha
+  - account
+  - headers
+  - ssl
+  - cache
+  - cachepois
+  - csp
+  - upload
+  - download
+  - fingerprint
+  - disclosure
+  - secrets
+  - subdomain
+  - takeover
+  - cloud
+  - paramfind
+  - dirbust
+  - dork
+  - cve
+  - smuggle
+  - h2smuggle
+  - deserial
+  - fuzz
+  - redirect
+  - techdetect
+
+config:
+  threads: 50
+  timeout: 15
+  crawl: true
+  crawl_depth: 5
+  aggressive: true
+  stealth: false
+  exploit: true

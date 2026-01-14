@@ -1,0 +1,27 @@
+name: api
+description: API-focused security testing
+
+modules:
+  - api
+  - graphql
+  - jwt
+  - oauth
+  - massassign
+  - idor
+  - auth
+  - cors
+  - apiver
+  - sqli
+  - xss
+  - ssrf
+  - headers
+  - secrets
+  - disclosure
+
+config:
+  threads: 75
+  timeout: 10
+  crawl: true
+  crawl_depth: 3
+  aggressive: true
+  stealth: false

