@@ -1,0 +1,56 @@
+services:
+  juice-shop:
+    image: bkimminich/juice-shop:latest
+    container_name: lantern-juice-shop
+    ports:
+      - "3001:3000"
+    restart: unless-stopped
+    networks:
+      - lantern-lab
+
+  webgoat:
+    image: webgoat/webgoat:latest
+    container_name: lantern-webgoat
+    ports:
+      - "3002:8080"
+      - "9090:9090"
+    restart: unless-stopped
+    networks:
+      - lantern-lab
+
+  mutillidae:
+    image: webpwnized/mutillidae:www
+    container_name: lantern-mutillidae
+    ports:
+      - "3003:80"
+    restart: unless-stopped
+    depends_on:
+      - database
+      - directory
+    networks:
+      - lantern-lab
+
+  database:
+    image: webpwnized/mutillidae:database
+    container_name: lantern-mutillidae-db
+    restart: unless-stopped
+    networks:
+      - lantern-lab
+
+  directory:
+    image: webpwnized/mutillidae:ldap
+    container_name: lantern-mutillidae-ldap
+    restart: unless-stopped
+    volumes:
+      - ldap-data:/var/lib/ldap
+      - ldap-config:/etc/ldap/slapd.d
+    networks:
+      - lantern-lab
+
+networks:
+  lantern-lab:
+    driver: bridge
+
+volumes:
+  ldap-data:
+  ldap-config:

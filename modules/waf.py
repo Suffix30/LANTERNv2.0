@@ -1,7 +1,8 @@
 import re
+import random
 import asyncio
 from typing import Dict, List, Optional, Set
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlencode
 from modules.base import BaseModule
 
 
@@ -167,6 +168,7 @@ class WafModule(BaseModule):
             self._passive_detection(base_url),
             self._active_detection(base_url),
             self._block_page_analysis(base_url),
+            self._bypass_probe(base_url),
         ]
         await asyncio.gather(*tasks)
         
@@ -260,6 +262,61 @@ class WafModule(BaseModule):
                         evidence=f"Block indicator: {indicator}"
                     )
                 break
+    
+    bypass_candidate_paths = [
+        "/", "/login", "/api/", "/api/v1/status", "/admin", "/search",
+        "/user", "/auth", "/graphql", "/rest/v1/",
+    ]
+    
+    bypass_path_variants = [
+        lambda p: p,
+        lambda p: p.upper() if p != "/" else p,
+        lambda p: p.rstrip("/") + "/" if p != "/" else p,
+        lambda p: p + "?" + urlencode({"q": "test"}) if "?" not in p else p,
+        lambda p: p.replace("/", "//") if p != "/" else p,
+        lambda p: p.rstrip("/") + "/..;/" if p != "/" else p,
+        lambda p: p + "%2e%2e/" if p != "/" else p,
+    ]
+    
+    bypass_header_sets = [
+        {},
+        {"X-Forwarded-For": "127.0.0.1"},
+        {"X-Forwarded-For": "10.0.0.1", "X-Real-IP": "10.0.0.1"},
+        {"X-Originating-IP": "127.0.0.1"},
+        {"CF-Connecting-IP": "127.0.0.1"},
+    ]
+    
+    async def _bypass_probe(self, target):
+        targets = []
+        for p in self.bypass_candidate_paths[:6]:
+            for fn in self.bypass_path_variants[:5]:
+                path = fn(p)
+                url = urljoin(target, path.lstrip("/"))
+                if url not in targets:
+                    targets.append(url)
+        blocked_at = None
+        for url in targets[:15]:
+            for hdr_set in self.bypass_header_sets:
+                headers = dict(hdr_set)
+                if "X-Forwarded-For" in headers and headers["X-Forwarded-For"] in ("127.0.0.1", "10.0.0.1"):
+                    headers["X-Forwarded-For"] = ".".join(str(random.randint(1, 254)) for _ in range(4))
+                if "X-Real-IP" in headers and headers["X-Real-IP"] == "10.0.0.1":
+                    headers["X-Real-IP"] = ".".join(str(random.randint(1, 254)) for _ in range(4))
+                try:
+                    resp = await self.http.get(url, headers=headers or None)
+                except Exception:
+                    continue
+                if resp.get("status") in (403, 429):
+                    if blocked_at is None:
+                        blocked_at = url
+                    self.add_finding(
+                        "INFO",
+                        "Rate-limit or WAF block observed; path/header bypass probe",
+                        url=url,
+                        evidence=f"HTTP {resp.get('status')} on path variant / IP-spoof header (bypass probe)"
+                    )
+                    return
+        return
     
     def _check_signatures(self, waf_name, signatures, headers, cookies, body, server):
         for header in signatures.get("headers", []):

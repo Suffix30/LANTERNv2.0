@@ -34,14 +34,16 @@ BANNER = """[bold cyan]
 ALL_MODULES = [
     "sqli", "xss", "ssrf", "lfi", "ssti", "cmdi", "xxe", "crlf", "hpp",
     "auth", "jwt", "oauth", "mfa", "session", "cookie", "csrf", "ldap",
-    "idor", "massassign", "cors",
+    "idor", "massassign", "cors", "accessctl",
     "api", "graphql", "websocket", "apiver",
     "dom", "prototype", "clickjack",
-    "payment", "race", "captcha", "account",
+    "payment", "race", "captcha", "account", "logic",
     "headers", "ssl", "cache", "upload", "download",
     "fingerprint", "disclosure", "secrets", "subdomain", "dork", "cve", "dirbust",
     "smuggle", "deserial", "fuzz", "redirect", "techdetect",
     "waf", "takeover", "cloud", "paramfind", "csp", "h2smuggle", "cachepois",
+    "cdn", "brokenlinks", "embed",
+    "hostinject", "emailinject",
 ]
 
 FAST_MODULES = [
@@ -69,6 +71,8 @@ CHAIN_MODULES = {
     "injection": ["waf", "paramfind", "sqli", "xss", "ssti", "cmdi", "lfi", "xxe", "crlf"],
     "smuggle": ["waf", "h2smuggle", "smuggle", "cachepois"],
     "cache": ["cachepois", "headers", "cors"],
+    "poisoning": ["hostinject", "emailinject", "crlf", "cachepois", "redirect", "cache"],
+    "business_logic": ["logic", "payment", "race", "account", "massassign"],
 }
 
 def parse_args():
@@ -119,6 +123,18 @@ def parse_args():
     parser.add_argument("--exclude-pattern", action="append", help="Exclude URL pattern (regex)")
     parser.add_argument("--cache", action="store_true", help="Enable response caching")
     parser.add_argument("--cache-ttl", type=int, default=300, help="Cache TTL in seconds (default: 300)")
+    parser.add_argument("--auth-config", type=str, help="Authentication configuration YAML file")
+    parser.add_argument("--workflow", type=str, help="Run business logic workflow YAML file")
+    parser.add_argument("--workflow-attack", type=str, help="Run specific attack from workflow")
+    parser.add_argument("--oob-server", action="store_true", help="Start built-in OOB callback server")
+    parser.add_argument("--oob-port", type=int, default=8888, help="OOB HTTP server port (default: 8888)")
+    parser.add_argument("--oob-dns-port", type=int, default=5353, help="OOB DNS server port (default: 5353)")
+    parser.add_argument("--analyze-js", action="store_true", help="Deep JavaScript analysis (endpoints, secrets, DOM sinks)")
+    parser.add_argument("--cve-scan", action="store_true", help="Scan for known CVEs based on detected technologies")
+    parser.add_argument("--generate-pocs", action="store_true", help="Generate PoC files for each finding")
+    parser.add_argument("--fuzz-params", action="store_true", help="Intelligent parameter fuzzing with boundary values")
+    parser.add_argument("--diff-baseline", action="store_true", help="Establish response baselines for anomaly detection")
+    parser.add_argument("--list-workflows", action="store_true", help="List available attack workflows")
     return parser.parse_args()
 
 def show_modules():
@@ -127,51 +143,67 @@ def show_modules():
     table.add_column("Description", style="white")
     table.add_column("Type", style="dim")
     modules_info = {
-        "sqli": ("SQL Injection with auto data extraction", "Injection"),
-        "xss": ("Cross-Site Scripting", "Injection"),
-        "ssrf": ("Server-Side Request Forgery", "Server-Side"),
-        "lfi": ("Local File Inclusion", "Server-Side"),
-        "ssti": ("Server-Side Template Injection", "Server-Side"),
-        "cmdi": ("OS Command Injection", "Injection"),
-        "xxe": ("XML External Entity", "Injection"),
+        "sqli": ("SQL Injection + boolean/time detection, auto extraction, MSSQL/Azure", "Injection"),
+        "xss": ("Cross-Site Scripting + reflection analysis, DOM sinks", "Injection"),
+        "ssrf": ("Server-Side Request Forgery + OOB blind detection", "Server-Side"),
+        "lfi": ("Local File Inclusion + auto-escalation chain", "Server-Side"),
+        "ssti": ("Server-Side Template Injection + OOB RCE, filter bypass", "Server-Side"),
+        "cmdi": ("OS Command Injection + OOB callbacks, filter bypass", "Injection"),
+        "xxe": ("XML External Entity + OOB blind, error-based, UTF bypass", "Injection"),
         "crlf": ("CRLF Injection", "Injection"),
         "hpp": ("HTTP Parameter Pollution", "Injection"),
-        "auth": ("Authentication Testing", "Auth"),
-        "jwt": ("JWT Attacks", "Auth"),
-        "oauth": ("OAuth Misconfiguration", "Auth"),
-        "mfa": ("MFA/2FA Bypass", "Auth"),
+        "auth": ("Authentication Testing + multi-role, privilege escalation", "Auth"),
+        "jwt": ("JWT Attacks + JWK/JKU/KID injection, secret cracking", "Auth"),
+        "oauth": ("OAuth Misconfiguration + code injection, token exchange", "Auth"),
+        "mfa": ("MFA/2FA Bypass + race condition, time-based, SMS intercept", "Auth"),
         "session": ("Session Management", "Auth"),
         "cookie": ("Cookie Security", "Auth"),
         "csrf": ("Cross-Site Request Forgery", "Auth"),
-        "idor": ("Insecure Direct Object Reference", "Access"),
+        "ldap": ("LDAP Injection + timing-based, error-based extraction", "Injection"),
+        "idor": ("Insecure Direct Object Reference + cross-user testing", "Access"),
         "massassign": ("Mass Assignment", "Access"),
         "cors": ("CORS Misconfiguration", "Access"),
         "api": ("REST API Testing", "API"),
-        "graphql": ("GraphQL Security", "API"),
-        "websocket": ("WebSocket Security", "API"),
-        "dom": ("DOM-based Vulnerabilities", "Client"),
+        "graphql": ("GraphQL Security + JS discovery, auto-extraction", "API"),
+        "websocket": ("WebSocket Security + race, JWT bypass, subscription hijack", "API"),
+        "dom": ("DOM-based + js_analyzer, DOM clobbering, CSTI", "Client"),
         "prototype": ("Prototype Pollution", "Client"),
         "clickjack": ("Clickjacking", "Client"),
         "payment": ("E-commerce/Payment Security", "Business"),
-        "race": ("Race Conditions", "Business"),
+        "race": ("Race Conditions + double-spend detection", "Business"),
         "captcha": ("CAPTCHA Bypass", "Business"),
         "account": ("Account Security", "Business"),
+        "logic": ("Business Logic + workflow integration, payment bypass", "Business"),
+        "accessctl": ("Access Control + horizontal/vertical privesc, JWT manipulation", "Access"),
         "headers": ("Security Headers", "Config"),
         "ssl": ("SSL/TLS Config", "Config"),
         "cache": ("Cache Poisoning", "Config"),
-        "upload": ("File Upload", "Config"),
+        "upload": ("File Upload + confidence scoring, PoC data", "Config"),
         "download": ("File Download", "Config"),
         "fingerprint": ("Tech Fingerprinting", "Recon"),
-        "disclosure": ("Info Disclosure", "Recon"),
+        "disclosure": ("Info Disclosure + .git/.env parsing, secrets extraction", "Recon"),
         "secrets": ("Secrets Scanner", "Recon"),
         "subdomain": ("High-Speed Subdomain Brute + Takeover", "Recon"),
         "techdetect": ("Technology Stack Detection", "Recon"),
         "dork": ("Google Dorks", "Recon"),
         "cve": ("CVE Scanner", "Recon"),
-        "smuggle": ("HTTP Smuggling", "Advanced"),
-        "deserial": ("Deserialization", "Advanced"),
+        "smuggle": ("HTTP Smuggling + timing-based verification", "Advanced"),
+        "deserial": ("Deserialization + OOB verification, PHAR, SnakeYAML", "Advanced"),
         "fuzz": ("Parameter Fuzzer", "Advanced"),
         "redirect": ("Open Redirect", "Advanced"),
+        "waf": ("WAF Detection & Bypass", "Recon"),
+        "takeover": ("Subdomain Takeover", "Recon"),
+        "cloud": ("Cloud Storage Misconfiguration", "Recon"),
+        "paramfind": ("Parameter Discovery", "Recon"),
+        "csp": ("Content-Security-Policy Bypass", "Config"),
+        "h2smuggle": ("HTTP/2 Smuggling", "Advanced"),
+        "cachepois": ("Cache Poisoning", "Advanced"),
+        "apiver": ("API Version Discovery", "API"),
+        "cdn": ("CDN Detection", "Config"),
+        "brokenlinks": ("Broken Link Checker", "Recon"),
+        "embed": ("Embedded Objects (iframe/embed/object)", "Client"),
+        "hostinject": ("Host / Password Reset Poisoning", "Auth"),
+        "emailinject": ("Email Header Injection", "Injection"),
     }
     for mod, (desc, mod_type) in modules_info.items():
         table.add_row(mod, desc, mod_type)
@@ -241,6 +273,29 @@ def show_presets():
         table.add_row(preset["name"], preset["description"], str(preset["modules"]))
     
     console.print(table)
+
+
+def show_workflows():
+    table = Table(title="Pre-built Attack Workflows", box=box.ROUNDED, border_style="red")
+    table.add_column("Workflow", style="bold red")
+    table.add_column("Description", style="white")
+    table.add_column("Attack Types", style="dim")
+    
+    workflows_info = {
+        "payment_bypass": ("Payment/checkout flow attacks", "zero price, negative qty, coupon stacking, skip payment"),
+        "auth_bypass": ("Authentication bypass attacks", "IDOR, JWT none alg, session fixation, password reset"),
+        "api_abuse": ("API exploitation attacks", "mass assignment, GraphQL introspection, BOLA, rate limit bypass"),
+        "file_upload": ("File upload bypass & RCE", "webshell, double ext, null byte, SVG XSS/XXE, polyglot"),
+        "ssrf_chain": ("SSRF to cloud metadata", "AWS/GCP/Azure metadata, gopher://, Redis RCE, DNS rebinding"),
+        "sqli_escalate": ("SQLi to shell escalation", "union extract, file read/write, xp_cmdshell, COPY RCE"),
+    }
+    
+    for name, (desc, attacks) in workflows_info.items():
+        table.add_row(name, desc, attacks)
+    
+    console.print(table)
+    console.print("\n[dim]Usage: lantern -t <url> --workflow workflows/<name>.yml[/]")
+    console.print("[dim]Run specific attack: lantern -t <url> --workflow workflows/<name>.yml --workflow-attack <attack_name>[/]")
 
 
 def generate_stats_table(scanner, findings_count, severity_counts, progress_pct):
@@ -329,6 +384,10 @@ async def main():
         show_presets()
         return
     
+    if hasattr(args, 'list_workflows') and args.list_workflows:
+        show_workflows()
+        return
+    
     if hasattr(args, 'collab_server') and args.collab_server:
         from core.collab import run_collab_server
         host, port = "0.0.0.0", 8080
@@ -340,6 +399,21 @@ async def main():
         console.print(f"[bold cyan]Starting collaboration server on {host}:{port}[/]")
         await run_collab_server(host, port)
         return
+    
+    oob_manager = None
+    if getattr(args, 'oob_server', False):
+        from core.oob import OOBManager
+        oob_manager = OOBManager()
+        oob_manager.setup_server(
+            http_port=getattr(args, 'oob_port', 8888),
+            dns_port=getattr(args, 'oob_dns_port', 5353),
+        )
+        oob_manager.start_server_background()
+        console.print(f"[bold cyan]OOB Server started:[/] HTTP:{args.oob_port} DNS:{args.oob_dns_port}")
+    
+    if getattr(args, 'workflow', None) and not args.target:
+        console.print("[bold red]Error:[/] Workflow requires a target. Use -t <url>")
+        sys.exit(1)
     
     if not args.target:
         console.print("[bold red]Error:[/] Target required. Use -t <url> or -t <file>")
@@ -395,6 +469,15 @@ async def main():
         "include_domains": getattr(args, 'include_domain', None) or [],
         "exclude_domains": getattr(args, 'exclude_domain', None) or [],
         "exclude_patterns": getattr(args, 'exclude_pattern', None) or [],
+        "auth_config": getattr(args, 'auth_config', None),
+        "workflow": getattr(args, 'workflow', None),
+        "workflow_attack": getattr(args, 'workflow_attack', None),
+        "oob_manager": oob_manager if getattr(args, 'oob_server', False) else None,
+        "analyze_js": getattr(args, 'analyze_js', False),
+        "cve_scan": getattr(args, 'cve_scan', False),
+        "generate_pocs": getattr(args, 'generate_pocs', False),
+        "fuzz_params": getattr(args, 'fuzz_params', False),
+        "diff_baseline": getattr(args, 'diff_baseline', False),
     }
     
     if config.get("scope_file") or config.get("include_domains") or config.get("exclude_domains"):
@@ -503,6 +586,119 @@ async def main():
             console.print(f"  [green]Added modules:[/] {', '.join(smart_modules)}")
     
     config["dns_concurrency"] = getattr(args, 'dns_concurrency', 500)
+    
+    if getattr(args, 'workflow', None):
+        from core.workflow import WorkflowEngine
+        from core.http import HttpClient
+        from core.auth_manager import create_auth_manager
+        
+        console.print(f"\n[bold cyan]Workflow Mode:[/] {args.workflow}")
+        
+        async with HttpClient(config) as http:
+            auth_manager = None
+            if getattr(args, 'auth_config', None):
+                auth_data = yaml.safe_load(open(args.auth_config))
+                auth_manager = create_auth_manager(http, auth_data.get("authentication", {}))
+                auth_manager.set_base_url(targets[0])
+                auth_manager.add_credentials_from_dict(auth_data.get("authentication", {}).get("roles", {}))
+                console.print(f"  [dim]Auth config loaded with {len(auth_manager.credentials)} roles[/]")
+            
+            engine = WorkflowEngine(http, auth_manager, targets[0])
+            workflow = engine.load_workflow(args.workflow)
+            
+            console.print(f"  [dim]Workflow:[/] {workflow.name} - {workflow.description}")
+            console.print(f"  [dim]Steps:[/] {len(workflow.steps)}, [dim]Attacks:[/] {len(workflow.attacks)}")
+            
+            if getattr(args, 'workflow_attack', None):
+                result = await engine.execute_attack(workflow, args.workflow_attack)
+                if result.success:
+                    console.print(f"\n[bold red]VULNERABILITY FOUND:[/] {result.vulnerability}")
+                    console.print(f"  Evidence: {result.evidence}")
+                else:
+                    console.print(f"\n[green]Attack '{args.workflow_attack}' did not find vulnerability[/]")
+            else:
+                results = await engine.fuzz_workflow(workflow)
+                vulns_found = [r for r in results if r.success]
+                
+                if vulns_found:
+                    console.print(f"\n[bold red]Found {len(vulns_found)} vulnerabilities:[/]")
+                    for r in vulns_found:
+                        console.print(f"  - [{r.severity}] {r.attack_name}: {r.vulnerability}")
+                else:
+                    console.print(f"\n[green]No vulnerabilities found in workflow attacks[/]")
+        
+        return
+    
+    if getattr(args, 'analyze_js', False):
+        from core.js_analyzer import create_analyzer
+        from core.http import HttpClient
+        
+        console.print("\n[bold cyan]JavaScript Analysis[/]")
+        
+        for t in targets:
+            async with HttpClient(config) as http:
+                analyzer = create_analyzer()
+                result = await analyzer.analyze_url(http, t)
+                
+                console.print(f"\n[bold]Target:[/] {t}")
+                console.print(f"  [dim]Scripts analyzed:[/] {result.scripts_analyzed}")
+                
+                if result.endpoints:
+                    console.print(f"\n  [bold green]Endpoints Found ({len(result.endpoints)}):[/]")
+                    for ep in result.endpoints[:10]:
+                        console.print(f"    [{ep.method}] {ep.url}")
+                        if ep.parameters:
+                            console.print(f"        Params: {', '.join(ep.parameters[:5])}")
+                
+                if result.secrets:
+                    console.print(f"\n  [bold red]Secrets Found ({len(result.secrets)}):[/]")
+                    for secret in result.secrets[:10]:
+                        console.print(f"    [{secret.severity}] {secret.secret_type}: {secret.value[:30]}...")
+                
+                if result.dom_sinks:
+                    tainted = [s for s in result.dom_sinks if s.tainted]
+                    console.print(f"\n  [bold yellow]DOM Sinks ({len(result.dom_sinks)}, {len(tainted)} tainted):[/]")
+                    for sink in tainted[:5]:
+                        console.print(f"    [{sink.sink_type}] Line {sink.line_number} - Source: {sink.source}")
+                
+                if result.frameworks_detected:
+                    console.print(f"\n  [dim]Frameworks:[/] {', '.join(result.frameworks_detected)}")
+        
+        if not args.modules:
+            return
+    
+    if getattr(args, 'cve_scan', False):
+        from core.cve_db import create_cve_db
+        from core.http import HttpClient
+        
+        console.print("\n[bold cyan]CVE Scanning[/]")
+        
+        cve_db = create_cve_db()
+        console.print(f"  [dim]Loaded {cve_db.get_cve_count()} CVEs for {len(cve_db.get_all_products())} products[/]")
+        
+        for t in targets:
+            async with HttpClient(config) as http:
+                resp = await http.get(t)
+                fingerprints = {
+                    "headers": str(resp.get("headers", {})),
+                    "body": resp.get("text", "")[:5000],
+                }
+                
+                identified = cve_db.identify_product(fingerprints)
+                
+                if identified:
+                    console.print(f"\n[bold]Target:[/] {t}")
+                    for product, version in identified:
+                        cves = cve_db.get_cves_for_product(product, version)
+                        console.print(f"  [cyan]{product}[/] {version or '(unknown version)'}: {len(cves)} potential CVEs")
+                        
+                        for cve in cves[:5]:
+                            result = await cve_db.test_cve(http, t, cve, args.callback_host)
+                            status = "[red]VULNERABLE[/]" if result.vulnerable else "[dim]Not vulnerable[/]"
+                            console.print(f"    {cve.id} (CVSS {cve.cvss}): {status}")
+        
+        if not args.modules:
+            return
     
     chain_mode = getattr(args, 'chain', None)
     mode = f"Chain: {chain_mode}" if chain_mode else "Aggressive" if args.aggressive else "Stealth" if args.stealth else "Fast" if args.fast else "Deep" if args.deep else "Smart" if getattr(args, 'smart', False) else "Normal"
@@ -613,23 +809,32 @@ async def main():
         saved = []
         report_format = getattr(args, 'format', 'html')
         
-        if report_format in ["html", "all"]:
-            html_path = await reporter.save_html(f"{args.output}.html")
-            saved.append(html_path)
-        
-        if report_format in ["json", "all"]:
-            json_path = await reporter.save_json(f"{args.output}.json")
-            saved.append(json_path)
-        
-        if report_format in ["md", "all"]:
-            md_path = await reporter.save_markdown(f"{args.output}.md")
-            saved.append(md_path)
-        
-        if report_format in ["jira", "all"]:
-            jira_path = await reporter.save_jira_csv(f"{args.output}_jira.csv")
-            saved.append(jira_path)
-        
-        console.print(f"\n[bold green]Reports saved:[/] {', '.join(saved)}")
+        if getattr(args, 'generate_pocs', False):
+            poc_result = await reporter.save_with_pocs(
+                args.output,
+                include_formats=["html", "json", "sarif", "markdown"] if report_format == "all" else [report_format]
+            )
+            console.print(f"\n[bold green]Reports with PoCs saved:[/] {poc_result['directory']}")
+            console.print(f"  Generated {poc_result['poc_count']} PoC files")
+            saved = poc_result['files']
+        else:
+            if report_format in ["html", "all"]:
+                html_path = await reporter.save_html(f"{args.output}.html")
+                saved.append(html_path)
+            
+            if report_format in ["json", "all"]:
+                json_path = await reporter.save_json(f"{args.output}.json")
+                saved.append(json_path)
+            
+            if report_format in ["md", "all"]:
+                md_path = await reporter.save_markdown(f"{args.output}.md")
+                saved.append(md_path)
+            
+            if report_format in ["jira", "all"]:
+                jira_path = await reporter.save_jira_csv(f"{args.output}_jira.csv")
+                saved.append(jira_path)
+            
+            console.print(f"\n[bold green]Reports saved:[/] {', '.join(saved)}")
     
     crit_high = severity_counts["CRITICAL"] + severity_counts["HIGH"]
     if crit_high > 0:

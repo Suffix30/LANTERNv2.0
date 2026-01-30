@@ -38,12 +38,13 @@ class CloudModule(BaseModule):
         company = domain.split(".")[0]
         
         await self._find_s3_buckets(domain, company)
+        await self._find_do_spaces(domain, company)
         await self._find_azure_storage(domain, company)
         await self._find_gcp_storage(domain, company)
         await self._find_firebase(domain, company)
         await self._find_exposed_services(target)
+        await self._find_cloud_services(target)
         await self._check_cloud_metadata(target)
-        
         return self.findings
     
     async def _find_s3_buckets(self, domain: str, company: str):
@@ -67,12 +68,17 @@ class CloudModule(BaseModule):
         tasks = [check_bucket(b) for b in list(buckets_to_check)[:30]]
         await asyncio.gather(*tasks)
     
+    s3_regional_templates = [
+        "https://{bucket}.s3.amazonaws.com",
+        "https://s3.amazonaws.com/{bucket}",
+        "https://{bucket}.s3-us-east-1.amazonaws.com",
+        "https://{bucket}.s3.eu-west-1.amazonaws.com",
+        "https://{bucket}.s3.ap-northeast-1.amazonaws.com",
+        "https://{bucket}.s3-sa-east-1.amazonaws.com",
+    ]
+
     async def _check_s3_bucket(self, bucket: str):
-        urls = [
-            f"https://{bucket}.s3.amazonaws.com",
-            f"https://s3.amazonaws.com/{bucket}",
-        ]
-        
+        urls = [t.format(bucket=bucket) for t in self.s3_regional_templates]
         for url in urls:
             try:
                 resp = await self.http.get(url, timeout=5)
@@ -124,7 +130,80 @@ class CloudModule(BaseModule):
                         evidence="Bucket exists but not publicly accessible"
                     )
                     return
-    
+
+    async def _find_do_spaces(self, domain: str, company: str):
+        base = domain.replace(".", "-")
+        parts = domain.split(".")
+        buckets = {base, parts[0]}
+        for w in ["backup", "data", "files", "static", "media", "uploads", "public", "private"]:
+            buckets.add(f"{base}-{w}")
+            buckets.add(f"{parts[0]}-{w}")
+        do_regions = ["nyc3", "nyc1", "sfo2", "ams3"]
+        for bucket in list(buckets)[:15]:
+            for region in do_regions[:2]:
+                url = f"https://{bucket}.{region}.digitaloceanspaces.com/"
+                try:
+                    resp = await self.http.get(url, timeout=5)
+                except Exception:
+                    continue
+                if resp.get("status") == 200:
+                    body = resp.get("text", "")
+                    if "ListBucketResult" in body or ("<Key>" in body and "</Key>" in body):
+                        files = re.findall(r"<Key>([^<]+)</Key>", body)
+                        self.add_finding(
+                            "CRITICAL",
+                            f"DigitalOcean Space Publicly Listable: {bucket}",
+                            url=url,
+                            evidence=f"Found {len(files)} files"
+                        )
+                        return
+                    if len(body) > 200 and "AccessDenied" not in body:
+                        self.add_finding(
+                            "HIGH",
+                            f"DigitalOcean Space Accessible: {bucket}",
+                            url=url,
+                            evidence="Space returns content"
+                        )
+                        return
+
+    async def _find_cloud_services(self, target: str):
+        base = self.get_base(target)
+        parsed = urlparse(target)
+        domain = parsed.netloc or parsed.path
+        domain = domain.split(":")[0]
+        services = [
+            ("Jenkins", ["/jenkins", "/jenkins/login"], r"Jenkins|hudson"),
+            ("GitLab", ["/users/sign_in", "/gitlab", "/-/signin"], r"gitlab|GitLab"),
+            ("Jira", ["/jira", "/secure/Dashboard.jspa", "/login.jsp"], r"Atlassian|JIRA"),
+            ("Confluence", ["/confluence", "/wiki", "/login.action"], r"Confluence"),
+            ("Grafana", ["/grafana", "/login/grafana", "/dashboard/db"], r"grafana"),
+            ("Kibana", ["/kibana", "/app/kibana", "/login"], r"kbn-version|Kibana"),
+            ("Prometheus", ["/prometheus", "/graph", "/alerts"], r"Prometheus"),
+            ("SonarQube", ["/sonar", "/sonarqube", "/sessions/new"], r"SonarQube"),
+            ("Harbor", ["/harbor/sign-in", "/harbor/projects", "/api/v2.0/users"], r"Harbor"),
+            ("Portainer", ["/portainer", "/api/status"], r"Portainer"),
+            ("pgAdmin", ["/pgadmin4", "/pgadmin", "/browser"], r"pgAdmin"),
+            ("MinIO", ["/minio", "/minio/login", "/minio/admin"], r"MinIO"),
+        ]
+        for svc_name, paths, sig in services:
+            for path in paths:
+                url = urljoin(base, path.lstrip("/"))
+                try:
+                    resp = await self.http.get(url, timeout=5)
+                except Exception:
+                    continue
+                if resp.get("status") != 200:
+                    continue
+                body = (resp.get("text") or "")[:4000]
+                if sig and re.search(sig, body, re.IGNORECASE):
+                    self.add_finding(
+                        "HIGH",
+                        f"Exposed Service: {svc_name}",
+                        url=url,
+                        evidence=f"Signature match at {path}"
+                    )
+                    break
+
     async def _check_s3_write(self, bucket: str):
         test_file = f"lantern-test-{bucket[:8]}.txt"
         url = f"https://{bucket}.s3.amazonaws.com/{test_file}"

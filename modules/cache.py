@@ -57,12 +57,30 @@ class CacheModule(BaseModule):
                 url=target,
                 evidence="Cache headers present"
             )
-            
+            await self._check_cache_behavior(target)
             await self._test_cache_poisoning(target)
             await self._test_cache_deception(target)
             await self._test_parameter_cloaking(target)
         
         return self.findings
+    
+    async def _check_cache_behavior(self, target):
+        base = await self.http.get(target)
+        if not base.get("status"):
+            return
+        base_len = len(base.get("text", ""))
+        bust_url = target + (f"&cb={random_string(8)}" if "?" in target else f"?cb={random_string(8)}")
+        bust = await self.http.get(bust_url, headers={"Cache-Control": "no-cache"})
+        if not bust.get("status"):
+            return
+        bust_len = len(bust.get("text", ""))
+        if base_len != bust_len:
+            self.add_finding(
+                "INFO",
+                "Cache keyed by query or Cache-Control",
+                url=target,
+                evidence=f"Response size differs with cache-bust (baseline {base_len} vs {bust_len} bytes)"
+            )
     
     async def _detect_cache(self, target):
         resp = await self.http.get(target)

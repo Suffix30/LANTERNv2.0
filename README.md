@@ -12,11 +12,11 @@
     ░  ░     ░  ░         ░             ░  ░   ░              ░ 
 ```
 
-Web vulnerability scanner with automatic exploitation. 55 modules, async architecture, attack chains, and actual data extraction.
+Web vulnerability scanner with automatic exploitation. 62 modules, async architecture, attack chains, and actual data extraction.
 
 ## Features
 
-- **55 scanner modules** covering injection, auth, API, recon, and business logic
+- **62 scanner modules** covering injection, auth, API, recon, and business logic
 - **Auto-exploitation** - doesn't just find vulns, extracts data (credentials, files, cloud keys)
 - **Attack chains** - automatically pivots from one finding to the next
 - **Smart shell construction** - builds and uploads optimized webshells for RCE
@@ -36,7 +36,16 @@ Web vulnerability scanner with automatic exploitation. 55 modules, async archite
 - **Cache poisoning** - unkeyed headers/params, path normalization, web cache deception
 - **CSP bypass analysis** - CDN bypasses, JSONP detection, Angular exploitation
 - **Parameter discovery** - 308 common params, header fuzzing, JS/HTML extraction
-- **Reports** - HTML, JSON, Markdown, JIRA CSV with CVSS scores
+- **Reports** - HTML, JSON, Markdown, JIRA CSV, SARIF with CVSS scores
+- **Proof of Concept generation** - Auto-generates curl/Python/JS PoC code per finding
+- **Confidence scoring** - Evidence-based confidence levels (CONFIRMED/HIGH/MEDIUM/LOW)
+- **JavaScript analysis** - Extracts endpoints, secrets, DOM sinks from JS files
+- **Business logic workflows** - YAML-defined multi-step attack workflows
+- **Authentication state machine** - Multi-role session management for access control testing
+- **Intelligent fuzzing** - Boundary values, mutations, timing analysis, differential testing
+- **Built-in CVE database** - Version-matched CVE testing (Spring4Shell, Log4Shell, etc.)
+- **Response diffing** - Baseline comparison with dynamic content stripping
+- **Built-in OOB server** - HTTP/DNS callback server for blind vulnerability detection
 - **CI/CD integration** - Exit codes, SARIF for GitHub/GitLab, JUnit XML for Jenkins
 - **Scope management** - Include/exclude domains, IPs, regex patterns, file-based config
 - **Response caching** - LRU cache with TTL, persistence, improves scan speed
@@ -74,16 +83,14 @@ lantern -t https://target.com -m sqli,xss,ssrf --aggressive
 lantern -t https://target.com --fast
 ```
 
-## Command Reference
+## Documentation
 
-For comprehensive command examples, module combinations, obfuscation techniques, and advanced usage patterns, see the [Commands Expanded Guide](docs/Commands-Expanded.md).
+For comprehensive guides on all features, see the [Documentation Index](docs/INDEX.md).
 
-This guide includes:
-- Strategic module combinations for different testing scenarios
-- Obfuscation and WAF bypass techniques
-- Advanced command patterns and creative combinations
-- Complete module reference with common combinations
-- Quick reference for essential patterns
+**Quick links:**
+- [Quick Reference](docs/guides/reference.md) - Essential commands and flag combinations
+- [Module Guides](docs/INDEX.md#module-guides) - Injection, Auth, API, Recon, RCE, and more
+- [Feature Guides](docs/INDEX.md#feature-guides) - Workflows, JS Analysis, CVE Scanning, WAF Bypass
 
 ## Subdomain Brute Force
 
@@ -179,7 +186,7 @@ What exploitation does per module:
 |--------|-------------|
 | SSRF | Extracts AWS/GCP credentials, probes internal services |
 | LFI | Reads /etc/passwd, .env, config files, SSH keys |
-| SQLi | Dumps database version, tables, credentials |
+| SQLi | URL + JSON body params; dumps version, tables, credentials; MSSQL/Azure STRING_AGG blind extraction |
 | CMDI | Executes commands, reads files, extracts env vars |
 | SSTI | RCE via template engine, extracts system info |
 | XXE | Exfiltrates files, accesses cloud metadata |
@@ -228,19 +235,21 @@ List chains: `lantern --list-chains`
 
 ## Modules
 
-**Injection:** sqli, xss, cmdi, ssti, xxe, lfi, crlf, hpp, ldap, fuzz, deserial, smuggle, h2smuggle
+**Injection:** sqli, xss, cmdi, ssti, xxe, lfi, crlf, hpp, ldap, fuzz, deserial, smuggle, h2smuggle, emailinject, hostinject
 
-**Auth/Access:** auth, jwt, oauth, mfa, session, cookie, csrf, idor, massassign, cors, redirect, clickjack, upload
+**Auth/Access:** auth, jwt, oauth, mfa, session, cookie, csrf, idor, massassign, cors, redirect, clickjack, upload, accessctl
 
 **API:** api, graphql, websocket, apiver
 
-**Recon:** fingerprint, disclosure, secrets, subdomain, techdetect, dork, cve, dirbust, paramfind, takeover, cloud, waf
+**Recon:** fingerprint, disclosure, secrets, subdomain, techdetect, dork, cve, dirbust, paramfind, takeover, cloud, waf, brokenlinks
 
-**Config:** headers, ssl, cache, cachepois, download, ssrf, csp
+**Config:** headers, ssl, cache, cachepois, download, ssrf, csp, cdn
 
-**Business Logic:** payment, race, captcha, account, prototype, dom
+**Client:** prototype, dom, embed
 
-**55 modules total.** List all: `lantern --list`
+**Business Logic:** payment, race, captcha, account, logic
+
+**62 modules total.** List all: `lantern --list`
 
 ## Presets
 
@@ -307,6 +316,153 @@ Reports include:
 --exclude-pattern   Exclude URL pattern regex (repeatable)
 --cache             Enable response caching
 --cache-ttl         Cache TTL in seconds (default: 300)
+
+# New v2.0 Options
+--auth-config       Authentication config YAML (multi-role testing)
+--workflow          Business logic workflow YAML file
+--workflow-attack   Run specific attack from workflow
+--list-workflows    List available pre-built attack workflows
+--oob-server        Start built-in OOB callback server
+--oob-port          OOB HTTP server port (default: 8888)
+--oob-dns-port      OOB DNS server port (default: 5353)
+--analyze-js        Deep JavaScript analysis (endpoints, secrets, DOM sinks)
+--cve-scan          Scan for known CVEs based on detected technologies
+--generate-pocs     Generate PoC files for each finding
+--fuzz-params       Intelligent parameter fuzzing with boundary values
+--diff-baseline     Establish response baselines for anomaly detection
+```
+
+## Business Logic Workflows
+
+Test multi-step business flows for logic vulnerabilities:
+
+```bash
+lantern -t https://shop.target.com --workflow workflows/checkout_bypass.yml
+
+lantern -t https://target.com --workflow workflows/password_reset.yml --workflow-attack host_header_poison
+
+lantern -t https://target.com --workflow workflows/checkout_bypass.yml --auth-config configs/auth.yml
+```
+
+Workflow features:
+- YAML-defined multi-step request sequences
+- Variable extraction and injection between steps
+- Built-in attack generation (skip steps, modify params, replay)
+- Role-based testing with auth config
+
+Example workflow (`workflows/checkout_bypass.yml`):
+```yaml
+name: checkout_bypass
+steps:
+  - name: add_to_cart
+    request: { method: POST, url: /api/cart/add, json: { item_id: "1" } }
+    extract: { cart_id: $.cart_id }
+  - name: checkout
+    request: { method: POST, url: /api/checkout, json: { cart_id: "${cart_id}" } }
+attacks:
+  - name: skip_payment
+    skip_steps: [payment]
+  - name: zero_price
+    modify_step: checkout
+    modifications: { json.total: "0" }
+```
+
+## Pre-built Attack Workflows
+
+Ready-to-use attack workflows for common vulnerability chains:
+
+```bash
+lantern --list-workflows
+
+lantern -t https://shop.target.com --workflow workflows/payment_bypass.yml
+
+lantern -t https://target.com --workflow workflows/auth_bypass.yml --workflow-attack jwt_none_algorithm
+
+lantern -t https://target.com --workflow workflows/sqli_escalate.yml --oob-server
+```
+
+| Workflow | Attacks |
+|----------|---------|
+| `payment_bypass.yml` | Zero price, negative quantity, coupon stacking, skip payment, currency manipulation |
+| `auth_bypass.yml` | IDOR, role escalation, JWT none alg, session fixation, password reset takeover |
+| `api_abuse.yml` | Mass assignment, GraphQL introspection, BOLA enumeration, rate limit bypass |
+| `file_upload.yml` | PHP webshell, double extension, null byte, SVG XSS/XXE, polyglot, .htaccess |
+| `ssrf_chain.yml` | AWS/GCP/Azure metadata, Redis/Elasticsearch, gopher://, DNS rebinding |
+| `sqli_escalate.yml` | Union extraction, file read/write, xp_cmdshell, PostgreSQL COPY RCE |
+
+## JavaScript Analysis
+
+Deep analysis of JavaScript files:
+
+```bash
+lantern -t https://target.com --analyze-js
+
+lantern -t https://target.com --analyze-js -m xss,dom,prototype
+```
+
+Detects:
+- Hidden API endpoints (fetch, axios, XHR calls)
+- Hardcoded secrets (API keys, tokens, credentials)
+- DOM XSS sinks (innerHTML, eval, document.write)
+- Framework detection (React, Angular, Vue, etc.)
+- Source map exposure
+
+## CVE Scanning
+
+Automated CVE detection based on technology fingerprints:
+
+```bash
+lantern -t https://target.com --cve-scan
+
+lantern -t https://target.com --cve-scan --callback-host your-server.com
+```
+
+Built-in CVE database includes:
+- **Spring4Shell** (CVE-2022-22965)
+- **Log4Shell** (CVE-2021-44228)
+- **Apache Path Traversal** (CVE-2021-41773, CVE-2021-42013)
+- **Confluence OGNL** (CVE-2022-26134)
+- **WordPress, Drupal, Jira** vulnerabilities
+- And more...
+
+## Built-in OOB Server
+
+Start a callback server for blind vulnerability detection:
+
+```bash
+lantern -t https://target.com --oob-server --oob-port 8888 -m ssrf,xxe,sqli --exploit
+
+lantern -t https://target.com --oob-server --oob-dns-port 5353 -m ssrf --exploit
+```
+
+Features:
+- HTTP callback listener
+- DNS query listener
+- Token-based correlation
+- Automatic payload generation with unique tokens
+
+## Multi-Role Authentication Testing
+
+Test access controls across different user roles:
+
+```bash
+lantern -t https://target.com --auth-config configs/auth.yml -m idor,auth,session
+
+lantern -t https://target.com --auth-config configs/auth.yml --chain auth_bypass
+```
+
+Auth config example (`configs/auth.yml`):
+```yaml
+authentication:
+  type: form
+  login_url: /login
+  form:
+    username_field: email
+    password_field: password
+  roles:
+    admin: { username: admin@target.com, password: "${ADMIN_PASSWORD}" }
+    user: { username: user@target.com, password: "${USER_PASSWORD}" }
+    guest: { authenticated: false }
 ```
 
 ## CI/CD Integration
@@ -442,9 +598,42 @@ payloads/
 
 One payload per line. Modules will pick them up automatically.
 
-## Test Targets
+## Test Lab (Included)
 
-Legal targets for testing:
+LANTERN includes a complete vulnerable lab for testing. One command to start:
+
+**Windows:**
+```cmd
+cd lab
+start-lab.bat
+```
+
+**Linux/Mac:**
+```bash
+cd lab
+./start-lab.sh
+```
+
+This spins up 3 vulnerable applications:
+
+| Target | URL | Best For Testing |
+|--------|-----|------------------|
+| Juice Shop | http://localhost:3001 | XSS, SQLi, JWT, Auth bypass, IDOR, NoSQL |
+| WebGoat | http://localhost:3002 | XXE, Deserialization, Path traversal, JWT |
+| Mutillidae | http://localhost:3003 | LDAP, SSRF, XML, SQLi, CMDi, CSRF |
+
+Run full test suite:
+```bash
+cd lab
+./run-all-tests.sh      # Linux/Mac
+run-all-tests.bat       # Windows
+```
+
+See [lab/README.md](lab/README.md) for detailed test commands.
+
+## External Test Targets
+
+Legal targets for testing (no lab required):
 
 ```
 http://testphp.vulnweb.com
@@ -452,13 +641,6 @@ http://testhtml5.vulnweb.com
 http://testasp.vulnweb.com
 https://demo.testfire.net
 http://zero.webappsecurity.com
-```
-
-Self-hosted:
-```bash
-docker run -p 80:80 vulnerables/web-dvwa
-docker run -p 3000:3000 bkimminich/juice-shop
-docker run -p 8080:8080 webgoat/webgoat
 ```
 
 ## Project Structure
@@ -472,15 +654,26 @@ lantern/
 │   ├── engine.py        # Scan orchestration
 │   ├── http.py          # Async HTTP client
 │   ├── crawler.py       # Web crawler
-│   ├── reporter.py      # Report generation
+│   ├── reporter.py      # Report generation (HTML, JSON, SARIF, PoCs)
 │   ├── bypass.py        # WAF bypass + regex mutation engine
 │   ├── learned.py       # Payload learning system
 │   ├── dns_brute.py     # Async DNS brute forcer
 │   ├── tech_detect.py   # Technology fingerprinting
-│   └── cli.py           # Command-line interface
-├── modules/             # 45 scanner modules
+│   ├── cli.py           # Command-line interface
+│   ├── differ.py        # Response diffing + reflection detection
+│   ├── confidence.py    # Evidence-based confidence scoring
+│   ├── poc.py           # PoC generation (curl, Python, JS)
+│   ├── js_analyzer.py   # JavaScript analysis (endpoints, secrets, DOM)
+│   ├── auth_manager.py  # Multi-role authentication state machine
+│   ├── workflow.py      # Business logic workflow engine
+│   ├── fuzzer.py        # Intelligent fuzzing engine
+│   ├── cve_db.py        # CVE database + version matching
+│   └── oob.py           # Out-of-band callback server
+├── modules/             # 62 scanner modules
 ├── payloads/            # Attack payloads (add your own)
 │   └── learned/         # Auto-generated successful payloads
+├── workflows/           # Business logic workflow definitions
+├── configs/             # Authentication and scan configs
 └── presets/             # Scan profiles (YAML)
 ```
 

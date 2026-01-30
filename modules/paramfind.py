@@ -137,6 +137,11 @@ class ParamfindModule(BaseModule):
                 if canary in resp.get("text", ""):
                     return param
                 
+                if resp.get("status") in (301, 302, 303, 307, 308):
+                    loc = (resp.get("headers") or {}).get("Location", "")
+                    if loc and loc != target:
+                        return param
+                
                 return None
         
         tasks = [test_param(p) for p in self.common_params]

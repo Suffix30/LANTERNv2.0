@@ -225,8 +225,11 @@ class ApiModule(BaseModule):
     async def _check_api_docs(self, base_url):
         doc_paths = [
             "/swagger.json", "/swagger.yaml", "/openapi.json", "/openapi.yaml",
-            "/api-docs", "/swagger-ui.html", "/swagger/", "/redoc",
+            "/swagger/v1/swagger.json", "/swagger/v2/swagger.json",
+            "/api-docs", "/v3/api-docs", "/v2/api-docs", "/swagger-ui.html", "/swagger/", "/redoc",
+            "/docs/json", "/docs/swagger.json",
             "/api/swagger.json", "/v1/swagger.json", "/v2/swagger.json",
+            "/.well-known/openapi.json", "/.well-known/openapi.yaml",
         ]
         
         for path in doc_paths:

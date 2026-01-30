@@ -1,9 +1,12 @@
 from abc import ABC, abstractmethod
-from typing import Dict, List
+from typing import Dict, List, Optional, Any
 from core.utils import random_string, extract_params
 from core.http import inject_param, get_params, get_base_url
 from core.learned import record_successful_payload, record_successful_mutation, load_payloads_with_learned, load_payloads_with_learned as load_payloads
 from core.bypass import get_regex_mutator, get_obfuscator, PayloadMutator, WAFBypass, Obfuscator
+from core.differ import AdvancedResponseDiffer, create_differ
+from core.confidence import ConfidenceScorer, ConfidenceLevel, create_scorer
+from core.poc import PoCGenerator, create_poc_generator
 
  
 def requires(*modules):
@@ -86,6 +89,11 @@ class BaseModule(ABC):
         self.exploit_mode = config.get("exploit", False)
         self.findings = []
         self.exploited_data = {}
+        self.differ = create_differ()
+        self.confidence_scorer = create_scorer()
+        self.poc_generator = create_poc_generator()
+        self._baselines: Dict[str, dict] = {}
+        self._request_cache: Dict[str, dict] = {}
     
     @abstractmethod
     async def scan(self, target):
@@ -97,15 +105,164 @@ class BaseModule(ABC):
     def add_exploit_data(self, key, value):
         self.exploited_data[key] = value
     
-    def add_finding(self, severity, description, url=None, parameter=None, evidence=None):
-        self.findings.append({
+    def add_finding(self, severity, description, url=None, parameter=None, evidence=None,
+                    confidence_evidence: List[str] = None, request_data: dict = None, 
+                    response_data: dict = None, **kwargs):
+        confidence = None
+        if confidence_evidence:
+            result = self.confidence_scorer.calculate(self.name, confidence_evidence)
+            confidence = result.level.value
+            severity = self.confidence_scorer.adjust_severity(severity, result.level)
+        
+        finding = {
             "module": self.name,
             "severity": severity,
             "description": description,
             "url": url,
             "parameter": parameter,
-            "evidence": evidence[:500] if evidence else None
-        })
+            "evidence": evidence[:500] if evidence else None,
+            "confidence": confidence,
+        }
+        
+        finding.update(kwargs)
+        
+        if request_data:
+            self._request_cache[url or ""] = request_data
+            finding["request_data"] = request_data
+        
+        if response_data:
+            finding["response_length"] = len(response_data.get("text", ""))
+            finding["response_status"] = response_data.get("status")
+            finding["response_data"] = {
+                "status": response_data.get("status"),
+                "headers": response_data.get("headers", {}),
+                "text": response_data.get("text", "")[:2000],
+            }
+        
+        poc_data = self._generate_poc_data(url, parameter, request_data, response_data, description)
+        if poc_data:
+            finding["poc_data"] = poc_data
+        
+        self.findings.append(finding)
+    
+    def _generate_poc_data(self, url, parameter, request_data, response_data, description):
+        if not url:
+            return None
+        
+        method = "GET"
+        payload = None
+        headers = {}
+        post_data = None
+        
+        if request_data:
+            method = request_data.get("method", "GET")
+            payload = request_data.get("payload")
+            headers = request_data.get("headers", {})
+            post_data = request_data.get("data")
+        
+        reproduction_steps = [
+            f"Navigate to: {url}",
+        ]
+        
+        if parameter and payload:
+            reproduction_steps.append(f"Locate the '{parameter}' parameter")
+            reproduction_steps.append(f"Inject the payload: {payload}")
+            reproduction_steps.append(f"Observe the response for {description}")
+        elif payload:
+            reproduction_steps.append(f"Inject the payload: {payload}")
+            reproduction_steps.append(f"Observe the response for {description}")
+        else:
+            reproduction_steps.append(f"Check for {description}")
+        
+        if response_data and response_data.get("status"):
+            reproduction_steps.append(f"Expected response status: {response_data.get('status')}")
+        
+        curl_cmd = self._build_curl_command(url, method, parameter, payload, headers, post_data)
+        python_code = self._build_python_code(url, method, parameter, payload, headers, post_data)
+        
+        return {
+            "reproduction_steps": reproduction_steps,
+            "curl_command": curl_cmd,
+            "python_code": python_code,
+            "payload": payload,
+            "method": method,
+        }
+    
+    def _build_curl_command(self, url, method, parameter, payload, headers, post_data):
+        from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
+        
+        if method == "GET" and parameter and payload:
+            parsed = urlparse(url)
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            params[parameter] = [payload]
+            new_query = urlencode(params, doseq=True)
+            url = urlunparse(parsed._replace(query=new_query))
+        
+        cmd_parts = ["curl"]
+        
+        if method != "GET":
+            cmd_parts.append(f"-X {method}")
+        
+        for name, value in headers.items():
+            cmd_parts.append(f"-H '{name}: {value}'")
+        
+        if post_data:
+            if parameter and payload:
+                post_data = post_data.copy() if isinstance(post_data, dict) else {}
+                post_data[parameter] = payload
+            cmd_parts.append(f"-d '{urlencode(post_data) if isinstance(post_data, dict) else post_data}'")
+        
+        cmd_parts.append(f"'{url}'")
+        
+        return " \\\n  ".join(cmd_parts)
+    
+    def _build_python_code(self, url, method, parameter, payload, headers, post_data):
+        from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
+        
+        code_lines = [
+            "import requests",
+            "",
+        ]
+        
+        if method == "GET" and parameter and payload:
+            parsed = urlparse(url)
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            params[parameter] = [payload]
+            new_query = urlencode(params, doseq=True)
+            url = urlunparse(parsed._replace(query=new_query))
+        
+        code_lines.append(f"url = '{url}'")
+        
+        if headers:
+            code_lines.append(f"headers = {repr(headers)}")
+        else:
+            code_lines.append("headers = {}")
+        
+        if method == "GET":
+            code_lines.append("")
+            code_lines.append("response = requests.get(url, headers=headers, verify=False)")
+        elif method == "POST":
+            if post_data:
+                if parameter and payload:
+                    post_data = post_data.copy() if isinstance(post_data, dict) else {}
+                    post_data[parameter] = payload
+                code_lines.append(f"data = {repr(post_data)}")
+            else:
+                code_lines.append("data = {}")
+            code_lines.append("")
+            code_lines.append("response = requests.post(url, headers=headers, data=data, verify=False)")
+        else:
+            code_lines.append("")
+            code_lines.append(f"response = requests.request('{method}', url, headers=headers, verify=False)")
+        
+        code_lines.extend([
+            "",
+            "print(f'Status: {response.status_code}')",
+            "print(f'Headers: {dict(response.headers)}')",
+            "print(f'Body: {response.text[:1000]}')",
+        ])
+        
+        return "\n".join(code_lines)
     
     def log(self, message):
         if self.config.get("verbose"):
@@ -199,3 +356,63 @@ class BaseModule(ABC):
     def get_polyglot_sqli(self) -> List[str]:
         obf = get_obfuscator()
         return obf.get_polyglot_sqli()
+    
+    async def establish_baseline(self, url: str, method: str = "GET", **kwargs) -> dict:
+        if url in self._baselines:
+            return self._baselines[url]
+        
+        if method == "GET":
+            resp = await self.http.get(url, **kwargs)
+        else:
+            resp = await self.http.post(url, **kwargs)
+        
+        self.differ.set_baseline(url, resp)
+        self._baselines[url] = resp
+        return resp
+    
+    def compare_response(self, url: str, response: dict) -> Any:
+        return self.differ.compare(url, response)
+    
+    def find_reflection(self, response: dict, payload: str) -> List[Any]:
+        return self.differ.find_reflection(response, payload)
+    
+    def calculate_similarity(self, resp1: dict, resp2: dict) -> float:
+        return self.differ.calculate_similarity(resp1, resp2)
+    
+    def detect_boolean_behavior(self, true_responses: List[dict], false_responses: List[dict]) -> Optional[dict]:
+        return self.differ.detect_boolean_behavior(true_responses, false_responses)
+    
+    def detect_time_anomaly(self, responses: List[dict], baseline_time: float = None) -> Optional[dict]:
+        return self.differ.detect_time_anomaly(responses, baseline_time)
+    
+    def generate_poc(self, finding: dict, request: dict = None, response: dict = None) -> Any:
+        return self.poc_generator.generate(finding, request, response)
+    
+    def get_confidence_requirements(self, current_level: str) -> List[str]:
+        level = ConfidenceLevel[current_level] if current_level else ConfidenceLevel.LOW
+        return self.confidence_scorer.get_verification_steps(self.name, level)
+    
+    async def test_param_with_baseline(self, url: str, param: str, payload: str) -> tuple:
+        baseline = await self.establish_baseline(url)
+        resp = await self.test_param(url, param, payload)
+        diff = self.compare_response(url, resp)
+        return resp, diff
+    
+    async def smart_fuzz_param(self, url: str, param: str, payloads: List[str]) -> List[dict]:
+        baseline = await self.establish_baseline(url)
+        results = []
+        
+        for payload in payloads:
+            resp = await self.test_param(url, param, payload)
+            diff = self.compare_response(url, resp)
+            reflections = self.find_reflection(resp, payload)
+            
+            if diff.is_meaningful or reflections:
+                results.append({
+                    "payload": payload,
+                    "response": resp,
+                    "diff": diff.to_dict(),
+                    "reflections": [r.to_dict() for r in reflections],
+                })
+        
+        return results

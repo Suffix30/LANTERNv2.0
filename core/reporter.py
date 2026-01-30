@@ -1,8 +1,12 @@
 import json
 import os
+import uuid
 import aiofiles
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, List, Optional, Any
+
+from core.poc import PoCGenerator, create_poc_generator
 
 
 class Reporter:
@@ -13,6 +17,8 @@ class Reporter:
         self.timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.reports_dir = Path.cwd() / "reports"
         self.reports_dir.mkdir(exist_ok=True)
+        self.poc_generator = create_poc_generator()
+        self.scan_id = str(uuid.uuid4())[:8]
     
     cvss_scores = {
         "sqli": {"base": 9.8, "vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
@@ -152,6 +158,61 @@ class Reporter:
             "fix": "Include all user-controlled inputs in cache key. Use Vary header properly. Disable caching for dynamic content. Validate Host header.",
             "code": "Vary: Origin, Accept-Encoding, Accept-Language",
         },
+        "dom": {
+            "title": "DOM-based XSS",
+            "fix": "Sanitize user input before DOM manipulation. Use textContent instead of innerHTML. Implement CSP. Avoid dangerous sinks like eval(), document.write(), innerHTML with user data.",
+            "code": "element.textContent = userInput;  // Safe\n// element.innerHTML = userInput;  // Dangerous\nDOMPurify.sanitize(userInput);  // If HTML needed",
+        },
+        "prototype": {
+            "title": "Prototype Pollution",
+            "fix": "Freeze Object.prototype. Use Object.create(null) for dictionaries. Validate JSON keys. Avoid recursive merging of user-controlled objects.",
+            "code": "Object.freeze(Object.prototype);\nconst safeObj = Object.create(null);\n// Reject __proto__, constructor, prototype keys",
+        },
+        "auth": {
+            "title": "Authentication Bypass",
+            "fix": "Use strong authentication mechanisms. Implement proper session management. Enforce password complexity. Use MFA where possible.",
+            "code": "if not user.is_authenticated: abort(401)",
+        },
+        "session": {
+            "title": "Session Management",
+            "fix": "Use secure, HttpOnly, SameSite cookies. Regenerate session ID on login. Implement proper timeout. Invalidate sessions on logout.",
+            "code": "session.regenerate(); // After login\nres.cookie('session', token, {httpOnly: true, secure: true, sameSite: 'strict'})",
+        },
+        "oauth": {
+            "title": "OAuth/OIDC Vulnerabilities",
+            "fix": "Validate redirect_uri strictly. Use state parameter for CSRF protection. Validate tokens server-side. Use PKCE for public clients.",
+            "code": "if redirect_uri not in ALLOWED_REDIRECTS: abort(400)",
+        },
+        "mfa": {
+            "title": "MFA/2FA Bypass",
+            "fix": "Rate limit verification attempts. Implement lockout after failures. Use time-based codes with short validity. Validate MFA on all sensitive operations.",
+            "code": "if not verify_totp(code, user.mfa_secret): abort(401)",
+        },
+        "graphql": {
+            "title": "GraphQL Security",
+            "fix": "Disable introspection in production. Implement query depth limiting. Add query cost analysis. Use proper authorization on all resolvers.",
+            "code": "# Disable introspection\nschema = graphene.Schema(query=Query, auto_camelcase=False)",
+        },
+        "websocket": {
+            "title": "WebSocket Security",
+            "fix": "Validate Origin header. Implement authentication. Rate limit connections. Validate all messages server-side.",
+            "code": "if request.headers.get('Origin') not in ALLOWED_ORIGINS: abort(403)",
+        },
+        "race": {
+            "title": "Race Condition",
+            "fix": "Use database transactions with proper isolation. Implement locking mechanisms. Use atomic operations. Validate state before and after.",
+            "code": "with transaction.atomic():\n    obj = Model.objects.select_for_update().get(id=id)",
+        },
+        "secrets": {
+            "title": "Exposed Secrets",
+            "fix": "Remove hardcoded secrets. Use environment variables or secret managers. Rotate exposed credentials immediately. Audit commit history.",
+            "code": "import os\napi_key = os.environ.get('API_KEY')  # Not hardcoded",
+        },
+        "disclosure": {
+            "title": "Information Disclosure",
+            "fix": "Disable debug mode in production. Remove sensitive files from webroot. Configure proper error handling. Review response headers.",
+            "code": "DEBUG = False  # Production\napp.config['PROPAGATE_EXCEPTIONS'] = False",
+        },
     }
     
     def _get_cvss(self, finding):
@@ -228,6 +289,37 @@ class Reporter:
         html += '</div>'
         return html
     
+    def _format_response_data_html(self, response_data):
+        if not response_data:
+            return ""
+        
+        import html as html_escape
+        
+        status = response_data.get("status", "N/A")
+        headers = response_data.get("headers", {})
+        text = response_data.get("text", "")[:1500]
+        
+        headers_html = ""
+        if headers:
+            headers_html = "<br>".join([f"<code>{k}: {html_escape.escape(str(v)[:100])}</code>" for k, v in list(headers.items())[:10]])
+        
+        return f"""
+        <div class="response-data" style="background: #0a1a0a; border: 1px solid #1a3a1a; border-radius: 8px; padding: 15px; margin-top: 15px;">
+            <h4 style="color: #4ade80; margin-bottom: 10px;">📥 Response Details</h4>
+            <p><strong>Status Code:</strong> <code>{status}</code></p>
+            <details style="margin-top: 10px;">
+                <summary style="cursor: pointer; color: #4ade80;">Response Headers (click to expand)</summary>
+                <div style="margin-top: 10px; padding: 10px; background: #0a0a0f; border-radius: 4px; font-size: 0.9em;">
+                    {headers_html if headers_html else "<p>No headers captured</p>"}
+                </div>
+            </details>
+            <details style="margin-top: 10px;">
+                <summary style="cursor: pointer; color: #4ade80;">Response Body (click to expand)</summary>
+                <pre style="background: #0a0a0f; padding: 15px; border-radius: 4px; overflow-x: auto; margin-top: 10px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;"><code>{html_escape.escape(text)}</code></pre>
+            </details>
+        </div>
+        """
+    
     def _generate_executive_summary(self):
         total = len(self.results)
         critical = sum(1 for r in self.results if r["severity"] == "CRITICAL")
@@ -286,7 +378,7 @@ class Reporter:
             "findings": enriched_results,
         }
         
-        async with aiofiles.open(filepath, "w") as f:
+        async with aiofiles.open(filepath, "w", encoding="utf-8") as f:
             await f.write(json.dumps(data, indent=2))
         return str(filepath)
     
@@ -313,11 +405,58 @@ class Reporter:
             remediation = self._get_remediation(r)
             
             finding_id = f"finding-{hash(r.get('url', '') + r.get('description', '')) % 10000}"
+            confidence = r.get('confidence', 'N/A')
+            confidence_colors = {"CONFIRMED": "#28a745", "HIGH": "#20c997", "MEDIUM": "#ffc107", "LOW": "#6c757d", "INFO": "#17a2b8"}
+            confidence_color = confidence_colors.get(confidence, "#6c757d")
+            
+            request_html = ""
+            if r.get('request_data'):
+                req = r['request_data']
+                request_html = f"""
+                    <div class="request-data" style="background: #0a0a0f; border-radius: 8px; padding: 15px; margin-top: 15px;">
+                        <h4 style="color: #00d4ff; margin-bottom: 10px;">🔗 Request Details</h4>
+                        <p><strong>Method:</strong> {req.get('method', 'GET')}</p>
+                        <p><strong>URL:</strong> <code>{req.get('url', 'N/A')}</code></p>
+                        {f"<p><strong>Parameter:</strong> <code>{req.get('param')}</code></p>" if req.get('param') else ""}
+                        {f"<p><strong>Payload:</strong> <code>{str(req.get('payload', ''))[:100]}</code></p>" if req.get('payload') else ""}
+                    </div>
+                """
+            
+            poc_html = ""
+            if r.get('poc_data'):
+                poc = r['poc_data']
+                steps_html = ""
+                if poc.get('reproduction_steps'):
+                    steps_html = "<ol>" + "".join(f"<li>{step}</li>" for step in poc['reproduction_steps']) + "</ol>"
+                
+                import html as html_escape
+                curl_escaped = html_escape.escape(poc.get('curl_command', ''))
+                python_escaped = html_escape.escape(poc.get('python_code', '')[:500])
+                
+                poc_html = f"""
+                    <div class="poc-section" style="background: #0d0d1a; border: 1px solid #1a1a3e; border-radius: 8px; padding: 20px; margin-top: 15px;">
+                        <h4 style="color: #ff6b6b; margin-bottom: 15px;">🔴 Proof of Concept</h4>
+                        <div style="margin-bottom: 15px;">
+                            <h5 style="color: #00d4ff; margin-bottom: 10px;">Reproduction Steps</h5>
+                            {steps_html if steps_html else "<p>See curl command below</p>"}
+                        </div>
+                        <div style="margin-bottom: 15px;">
+                            <h5 style="color: #00d4ff; margin-bottom: 10px;">curl Command</h5>
+                            <pre style="background: #0a0a0f; padding: 15px; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; word-break: break-all;"><code>{curl_escaped}</code></pre>
+                        </div>
+                        <details style="margin-top: 15px;">
+                            <summary style="cursor: pointer; color: #00d4ff;">Python PoC (click to expand)</summary>
+                            <pre style="background: #0a0a0f; padding: 15px; border-radius: 4px; overflow-x: auto; margin-top: 10px;"><code>{python_escaped}</code></pre>
+                        </details>
+                    </div>
+                """
+            
             findings_html += f"""
             <div class="finding" id="{finding_id}">
                 <div class="finding-header">
                     <span class="severity" style="background-color: {color}">{r['severity']}</span>
                     <span class="module">{r['module']}</span>
+                    <span class="confidence" style="background-color: {confidence_color}; padding: 5px 12px; border-radius: 4px; font-size: 0.8em; color: white;">Conf: {confidence}</span>
                     <span class="cvss">CVSS: {cvss['score']}</span>
                 </div>
                 <div class="finding-body">
@@ -325,14 +464,11 @@ class Reporter:
                     <p><strong>URL:</strong> <code>{r.get('url', 'N/A')}</code></p>
                     <p><strong>Description:</strong> {r['description']}</p>
                     {f"<p><strong>Parameter:</strong> <code>{r.get('parameter')}</code></p>" if r.get('parameter') else ""}
-                    {f"<p><strong>Evidence:</strong> <code>{str(r.get('evidence', ''))[:200]}</code></p>" if r.get('evidence') else ""}
+                    {f"<p><strong>Evidence:</strong> <code>{str(r.get('evidence', ''))[:500]}</code></p>" if r.get('evidence') else ""}
                     {self._format_exploit_data_html(r.get('exploit_data')) if r.get('exploit_data') else ""}
-                    <div class="screenshot-placeholder">
-                        <div class="screenshot-box">
-                            <span>📷 Screenshot Placeholder</span>
-                            <p>Add screenshot: screenshots/{finding_id}.png</p>
-                        </div>
-                    </div>
+                    {request_html}
+                    {self._format_response_data_html(r.get('response_data')) if r.get('response_data') else ""}
+                    {poc_html}
                     <div class="remediation">
                         <h4>🔧 Remediation: {remediation['title']}</h4>
                         <p>{remediation['fix']}</p>
@@ -438,7 +574,7 @@ class Reporter:
 </html>"""
         
         filepath = self.reports_dir / filename if not os.path.dirname(filename) else Path(filename)
-        async with aiofiles.open(filepath, "w") as f:
+        async with aiofiles.open(filepath, "w", encoding="utf-8") as f:
             await f.write(html)
         return str(filepath)
     
@@ -521,7 +657,7 @@ class Reporter:
 """
         
         filepath = self.reports_dir / filename if not os.path.dirname(filename) else Path(filename)
-        async with aiofiles.open(filepath, "w") as f:
+        async with aiofiles.open(filepath, "w", encoding="utf-8") as f:
             await f.write(md)
         return str(filepath)
     
@@ -580,6 +716,201 @@ h3. Remediation
             ])
         
         filepath = self.reports_dir / filename if not os.path.dirname(filename) else Path(filename)
-        async with aiofiles.open(filepath, "w") as f:
+        async with aiofiles.open(filepath, "w", encoding="utf-8") as f:
             await f.write(output.getvalue())
         return str(filepath)
+    
+    async def save_sarif(self, filename):
+        sarif = {
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [{
+                "tool": {
+                    "driver": {
+                        "name": "Lantern",
+                        "version": "2.0",
+                        "informationUri": "https://github.com/lantern",
+                        "rules": self._generate_sarif_rules(),
+                    }
+                },
+                "results": self._generate_sarif_results(),
+                "invocations": [{
+                    "executionSuccessful": True,
+                    "startTimeUtc": self.timestamp,
+                }],
+            }],
+        }
+        
+        filepath = self.reports_dir / filename if not os.path.dirname(filename) else Path(filename)
+        async with aiofiles.open(filepath, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(sarif, indent=2))
+        return str(filepath)
+    
+    def _generate_sarif_rules(self) -> List[Dict]:
+        rules = {}
+        
+        for r in self.results:
+            module = r.get("module", "unknown")
+            if module not in rules:
+                cvss = self._get_cvss(r)
+                remediation = self._get_remediation(r)
+                
+                severity_map = {
+                    "CRITICAL": "error",
+                    "HIGH": "error",
+                    "MEDIUM": "warning",
+                    "LOW": "note",
+                    "INFO": "none",
+                }
+                
+                rules[module] = {
+                    "id": f"LANTERN-{module.upper()}",
+                    "name": remediation.get("title", module),
+                    "shortDescription": {"text": remediation.get("title", module)},
+                    "fullDescription": {"text": remediation.get("fix", "Security vulnerability detected")},
+                    "defaultConfiguration": {
+                        "level": severity_map.get(r.get("severity", "MEDIUM"), "warning")
+                    },
+                    "properties": {
+                        "security-severity": str(cvss["score"]),
+                        "tags": ["security", module],
+                    },
+                }
+        
+        return list(rules.values())
+    
+    def _generate_sarif_results(self) -> List[Dict]:
+        results = []
+        
+        for r in self.results:
+            cvss = self._get_cvss(r)
+            
+            result = {
+                "ruleId": f"LANTERN-{r.get('module', 'unknown').upper()}",
+                "message": {"text": r.get("description", "Vulnerability detected")},
+                "level": self._severity_to_sarif_level(r.get("severity", "MEDIUM")),
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": {
+                            "uri": r.get("url", "unknown"),
+                        },
+                    },
+                }],
+                "properties": {
+                    "confidence": r.get("confidence", "MEDIUM"),
+                    "cvss": cvss["score"],
+                    "parameter": r.get("parameter"),
+                },
+            }
+            
+            if r.get("evidence"):
+                result["fingerprints"] = {
+                    "evidence": r["evidence"][:200]
+                }
+            
+            results.append(result)
+        
+        return results
+    
+    def _severity_to_sarif_level(self, severity: str) -> str:
+        mapping = {
+            "CRITICAL": "error",
+            "HIGH": "error",
+            "MEDIUM": "warning",
+            "LOW": "note",
+            "INFO": "none",
+        }
+        return mapping.get(severity, "warning")
+    
+    async def save_with_pocs(self, base_filename: str, include_formats: List[str] = None):
+        if include_formats is None:
+            include_formats = ["html", "json", "sarif"]
+        
+        results_dir = self.reports_dir / f"scan_{self.scan_id}"
+        results_dir.mkdir(exist_ok=True)
+        
+        pocs_dir = results_dir / "pocs"
+        pocs_dir.mkdir(exist_ok=True)
+        
+        enriched_results = []
+        for i, r in enumerate(self.results):
+            poc = self.poc_generator.generate(r)
+            
+            poc_filename = f"poc_{i+1}_{r.get('module', 'unknown')}.md"
+            poc_path = pocs_dir / poc_filename
+            async with aiofiles.open(poc_path, "w", encoding="utf-8") as f:
+                await f.write(poc.to_markdown())
+            
+            enriched = r.copy()
+            enriched["poc_file"] = str(poc_path)
+            enriched["cvss"] = poc.cvss.to_dict()
+            enriched["poc_data"] = {
+                "curl_command": poc.curl_command,
+                "python_code": poc.python_code,
+                "reproduction_steps": poc.reproduction_steps,
+                "raw_request": poc.raw_request[:1000] if poc.raw_request else "",
+                "remediation": poc.remediation,
+            }
+            enriched_results.append(enriched)
+        
+        original_results = self.results
+        self.results = enriched_results
+        
+        generated_files = []
+        
+        if "html" in include_formats:
+            html_file = await self.save_html(str(results_dir / f"{base_filename}.html"))
+            generated_files.append(html_file)
+        
+        if "json" in include_formats:
+            json_file = await self.save_json(str(results_dir / f"{base_filename}.json"))
+            generated_files.append(json_file)
+        
+        if "sarif" in include_formats:
+            sarif_file = await self.save_sarif(str(results_dir / f"{base_filename}.sarif"))
+            generated_files.append(sarif_file)
+        
+        if "markdown" in include_formats:
+            md_file = await self.save_markdown(str(results_dir / f"{base_filename}.md"))
+            generated_files.append(md_file)
+        
+        if "jira" in include_formats:
+            jira_file = await self.save_jira_csv(str(results_dir / f"{base_filename}_jira.csv"))
+            generated_files.append(jira_file)
+        
+        self.results = original_results
+        
+        return {
+            "directory": str(results_dir),
+            "files": generated_files,
+            "poc_count": len(enriched_results),
+        }
+    
+    def get_summary(self) -> Dict[str, Any]:
+        exec_summary = self._generate_executive_summary()
+        
+        severity_counts = {}
+        module_counts = {}
+        confidence_counts = {}
+        
+        for r in self.results:
+            sev = r.get("severity", "UNKNOWN")
+            severity_counts[sev] = severity_counts.get(sev, 0) + 1
+            
+            mod = r.get("module", "unknown")
+            module_counts[mod] = module_counts.get(mod, 0) + 1
+            
+            conf = r.get("confidence", "UNKNOWN")
+            confidence_counts[conf] = confidence_counts.get(conf, 0) + 1
+        
+        return {
+            "scan_id": self.scan_id,
+            "timestamp": self.timestamp,
+            "targets": len(self.targets),
+            "modules_run": len(self.modules),
+            "total_findings": len(self.results),
+            "severity_breakdown": severity_counts,
+            "module_breakdown": module_counts,
+            "confidence_breakdown": confidence_counts,
+            "executive_summary": exec_summary,
+        }

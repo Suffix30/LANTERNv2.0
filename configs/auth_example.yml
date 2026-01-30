@@ -1,0 +1,70 @@
+authentication:
+  type: form
+  login_url: /login
+  logout_url: /logout
+  
+  form:
+    username_field: email
+    password_field: password
+    csrf_field: _token
+    submit_button: submit
+  
+  session:
+    cookie_name: session
+    header_name: null
+    refresh_threshold: 300
+  
+  success_indicators:
+    - redirect_to: /dashboard
+    - cookie_set: session
+    - body_contains: "Welcome"
+    - body_not_contains: "Invalid credentials"
+  
+  failure_indicators:
+    - body_contains: "Invalid"
+    - body_contains: "incorrect"
+    - body_contains: "failed"
+    - body_contains: "Error"
+  
+  roles:
+    admin:
+      username: admin@target.com
+      password: "${ADMIN_PASSWORD}"
+      expected_redirect: /admin/dashboard
+    
+    user:
+      username: testuser@target.com
+      password: "${USER_PASSWORD}"
+      expected_redirect: /dashboard
+    
+    editor:
+      username: editor@target.com
+      password: "${EDITOR_PASSWORD}"
+      expected_redirect: /dashboard
+    
+    guest:
+      authenticated: false
+
+role_hierarchy:
+  - guest
+  - user
+  - editor
+  - admin
+  - superadmin
+
+test_endpoints:
+  admin_only:
+    - /admin
+    - /admin/users
+    - /admin/settings
+    - /api/admin/config
+  
+  user_level:
+    - /dashboard
+    - /profile
+    - /api/user/data
+  
+  public:
+    - /
+    - /login
+    - /register

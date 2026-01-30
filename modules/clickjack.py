@@ -1,15 +1,29 @@
+from urllib.parse import urljoin
 from modules.base import BaseModule
 
 class ClickjackModule(BaseModule):
     name = "clickjack"
     description = "Clickjacking Vulnerability Scanner"
     
+    extra_paths = ["/", "/login", "/admin", "/dashboard", "/account", "/settings"]
+    
     async def scan(self, target):
         self.findings = []
-        
+        base = target.split("?")[0].rstrip("/")
+        urls_to_check = [target]
+        for path in self.extra_paths:
+            if path != "/":
+                u = urljoin(base + "/", path.lstrip("/"))
+                if u not in urls_to_check:
+                    urls_to_check.append(u)
+        for url in urls_to_check[:6]:
+            await self._check_one(url)
+        return self.findings
+    
+    async def _check_one(self, target):
         resp = await self.http.get(target)
         if not resp.get("status"):
-            return self.findings
+            return
         
         headers = {k.lower(): v for k, v in resp.get("headers", {}).items()}
         
@@ -62,8 +76,6 @@ class ClickjackModule(BaseModule):
                 )
         
         await self._check_sensitive_actions(target, resp)
-        
-        return self.findings
     
     async def _check_sensitive_actions(self, target, resp):
         text = resp.get("text", "").lower()

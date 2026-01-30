@@ -29,3 +29,5 @@ env/
 *.egg-info/
 dist/
 build/
+
+fullsend.ps1

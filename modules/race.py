@@ -1,7 +1,6 @@
 import asyncio
 import time
 import hashlib
-from typing import Dict, List, Set, Optional, Tuple
 from urllib.parse import urlparse, urljoin, parse_qs, urlencode
 from modules.base import BaseModule
 from core.utils import extract_params, random_string
@@ -208,7 +207,9 @@ class RaceModule(BaseModule):
                 "CRITICAL",
                 "Rate limit bypass via race condition",
                 url=target,
-                evidence=f"Bypassed: {success_count}/{burst_size} succeeded despite limits"
+                evidence=f"Bypassed: {success_count}/{burst_size} succeeded despite limits",
+                confidence_evidence=["rate_limit_bypassed", "concurrent_success"],
+                request_data={"method": "GET", "url": target, "burst_size": burst_size, "success_count": success_count}
             )
             
             self.vulnerable_endpoints.append({
@@ -282,7 +283,9 @@ class RaceModule(BaseModule):
                 "CRITICAL",
                 "Potential double-spend vulnerability",
                 url=target,
-                evidence=f"{len(success)} concurrent transactions succeeded"
+                evidence=f"{len(success)} concurrent transactions succeeded",
+                confidence_evidence=["double_spend_confirmed", "multiple_transactions"],
+                request_data={"method": "POST", "url": target, "success_count": len(success)}
             )
             
             self.vulnerable_endpoints.append({

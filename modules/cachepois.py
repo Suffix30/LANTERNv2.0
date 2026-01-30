@@ -387,13 +387,3 @@ class CachepoisModule(BaseModule):
             "params": urlencode(query_params, doseq=True) if query_params else "",
             "fragment": parsed.fragment,
         }
-    
-    def analyze_cache_key(self, url: str) -> Dict[str, str]:
-        parsed = urlparse(url)
-        query_params = parse_qs(parsed.query)
-        
-        return {
-            "path": parsed.path,
-            "params": urlencode(query_params, doseq=True) if query_params else "",
-            "fragment": parsed.fragment,
-        }

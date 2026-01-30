@@ -1,6 +1,15 @@
 import re
+import math
+from collections import Counter
 from urllib.parse import urlparse
 from modules.base import BaseModule
+
+def _entropy(s):
+    if not s or len(s) < 2:
+        return 0.0
+    freq = Counter(s)
+    n = len(s)
+    return -sum((c / n) * math.log2(c / n) for c in freq.values())
 
 class CookieModule(BaseModule):
     name = "cookie"
@@ -159,6 +168,19 @@ class CookieModule(BaseModule):
                 evidence=f"Domain: {cookie['domain']} (shared with subdomains)"
             )
         
+        try:
+            host = urlparse(target).netloc.split(":")[0].lower()
+            dom = (cookie.get("domain") or "").strip().lstrip(".").lower()
+            if dom and host and dom != host and not host.endswith("." + dom) and not dom.endswith("." + host):
+                self.add_finding(
+                    "HIGH",
+                    f"Third-party cookie domain: {cookie['name']}",
+                    url=target,
+                    evidence=f"Cookie domain '{cookie['domain']}' does not match target host '{host}'"
+                )
+        except Exception:
+            pass
+        
         if cookie["value"]:
             value = cookie["value"]
             
@@ -171,11 +193,12 @@ class CookieModule(BaseModule):
                 )
             
             if len(value) < 16 and is_sensitive:
+                ent = _entropy(value)
                 self.add_finding(
                     "MEDIUM",
                     f"Short session token: {cookie['name']}",
                     url=target,
-                    evidence=f"Length: {len(value)} chars (may be predictable)"
+                    evidence=f"Length: {len(value)} chars, entropy: {ent:.2f} (may be predictable)"
                 )
             
             if value.isdigit() and is_sensitive:

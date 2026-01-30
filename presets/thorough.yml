@@ -57,6 +57,12 @@ modules:
   - fuzz
   - redirect
   - techdetect
+  - cdn
+  - brokenlinks
+  - embed
+  - hostinject
+  - emailinject
+  - logic
 
 config:
   threads: 50
