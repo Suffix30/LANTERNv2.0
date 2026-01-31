@@ -252,7 +252,7 @@ lantern -t https://target.com --callback-host your-server.com -m xss,ssrf
 | Flag | What It Does |
 |------|--------------|
 | `--tech-detect` | Technology fingerprinting only |
-| `--analyze-js` | Extract endpoints, secrets, DOM sinks from JS |
+| `--analyze-js` | Extract endpoints, secrets, DOM sinks, BaaS credentials from JS |
 | `--cve-scan` | Scan for Log4Shell, Spring4Shell, 50+ CVEs |
 | `--fuzz-params` | Intelligent parameter fuzzing |
 | `--diff-baseline` | Anomaly detection with response baselines |
@@ -263,6 +263,30 @@ lantern -t https://target.com --tech-detect
 lantern -t https://target.com --analyze-js -m xss,dom --exploit
 lantern -t https://target.com --cve-scan --oob-server
 lantern -t https://target.com --fuzz-params -m sqli,xss
+```
+
+---
+
+## BaaS Credential Exploitation
+
+`--analyze-js` automatically detects and exploits exposed backend credentials:
+
+| Provider | Detection | Exploitation |
+|----------|-----------|--------------|
+| **Supabase** | URL + JWT keys | Table enumeration, data dump, sensitive field analysis |
+| **Firebase** | API key + domain | Database read/write test, collection enumeration |
+| **Appwrite** | Project URL | API access validation |
+| **PocketBase** | Client init | Admin access check |
+
+**What gets extracted:**
+- Accessible table names and row counts
+- Sensitive columns (password, email, ssn, card_number, etc.)
+- Actual sensitive values (JWTs, hashes, credit cards, phone numbers)
+- Full exploitation log with all attempts
+
+```bash
+lantern -t https://target.com --analyze-js --exploit -o report
+lantern -t https://target.com --analyze-js -m secrets --deep
 ```
 
 ---

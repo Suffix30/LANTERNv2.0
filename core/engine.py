@@ -179,6 +179,39 @@ class Scanner:
                             "target": target,
                         })
                     
+                    for baas_cred in js_results.get("baas_credentials", []):
+                        severity = "CRITICAL" if baas_cred.get("validated") else "HIGH"
+                        desc = f"Exposed {baas_cred.get('provider', 'BaaS').upper()} credentials"
+                        
+                        tables_count = len(baas_cred.get("accessible_tables", []))
+                        sensitive_count = len(baas_cred.get("sensitive_data_types", []))
+                        
+                        if baas_cred.get("validated"):
+                            desc += f" - {tables_count} TABLES ACCESSIBLE"
+                        if sensitive_count > 0:
+                            desc += f" [{sensitive_count} sensitive fields]"
+                        
+                        extracted_data = baas_cred.get("extracted_data", {})
+                        total_rows = sum(t.get("row_count", 0) for t in extracted_data.values())
+                        total_sensitive_values = sum(len(t.get("sensitive_values", [])) for t in extracted_data.values())
+                        
+                        if total_rows > 0:
+                            desc += f" ({total_rows} rows dumped)"
+                        if total_sensitive_values > 0:
+                            desc += f" [!!! {total_sensitive_values} SENSITIVE VALUES EXTRACTED]"
+                        
+                        self.results.append({
+                            "module": "baas_exposure",
+                            "severity": severity,
+                            "description": desc,
+                            "url": baas_cred.get("project_url"),
+                            "parameter": None,
+                            "evidence": f"Key: {baas_cred.get('api_key', '')[:30]}... | Source: {baas_cred.get('source_file', '')}",
+                            "target": target,
+                            "exploit_data": {"baas_credentials": [baas_cred]},
+                            "exploitation_log": baas_cred.get("exploitation_log", []),
+                        })
+                    
                     for endpoint in js_results.get("endpoints", []):
                         ep = endpoint.get("endpoint", "")
                         if ep.startswith("/"):

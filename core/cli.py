@@ -131,7 +131,7 @@ def parse_args():
     parser.add_argument("--oob-server", action="store_true", help="Start built-in OOB callback server")
     parser.add_argument("--oob-port", type=int, default=8888, help="OOB HTTP server port (default: 8888)")
     parser.add_argument("--oob-dns-port", type=int, default=5353, help="OOB DNS server port (default: 5353)")
-    parser.add_argument("--analyze-js", action="store_true", help="Deep JavaScript analysis (endpoints, secrets, DOM sinks)")
+    parser.add_argument("--analyze-js", action="store_true", help="Deep JavaScript analysis (endpoints, secrets, DOM sinks, BaaS credential exploitation)")
     parser.add_argument("--cve-scan", action="store_true", help="Scan for known CVEs based on detected technologies")
     parser.add_argument("--generate-pocs", action="store_true", help="Generate PoC files for each finding")
     parser.add_argument("--fuzz-params", action="store_true", help="Intelligent parameter fuzzing with boundary values")

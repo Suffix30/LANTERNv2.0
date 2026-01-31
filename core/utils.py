@@ -8,7 +8,6 @@ import uuid
 import time
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
-from core.http import inject_param
 
 
 class BloomFilter:
@@ -617,6 +616,7 @@ class ResponseBaseline:
         }
     
     async def check_reflection(self, url, payload, param_name=None):
+        from core.http import inject_param
         if param_name:
             test_url = inject_param(url, param_name, payload)
         else:

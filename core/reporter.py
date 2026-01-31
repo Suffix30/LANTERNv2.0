@@ -40,6 +40,8 @@ class Reporter:
         "waf": {"base": 0.0, "vector": "N/A"},
         "takeover": {"base": 9.8, "vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
         "cloud": {"base": 9.1, "vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"},
+        "baas_exposure": {"base": 9.8, "vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
+        "js_analysis": {"base": 7.5, "vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"},
         "paramfind": {"base": 3.1, "vector": "AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N"},
         "csp": {"base": 6.1, "vector": "AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"},
         "h2smuggle": {"base": 9.1, "vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"},
@@ -208,6 +210,16 @@ class Reporter:
             "fix": "Remove hardcoded secrets. Use environment variables or secret managers. Rotate exposed credentials immediately. Audit commit history.",
             "code": "import os\napi_key = os.environ.get('API_KEY')  # Not hardcoded",
         },
+        "baas_exposure": {
+            "title": "Backend-as-a-Service Credential Exposure",
+            "fix": "Remove API keys from frontend code. Use Row Level Security (RLS). Implement proper authentication. Rotate exposed keys immediately. Review database access policies.",
+            "code": "# Supabase: Enable RLS\nALTER TABLE users ENABLE ROW LEVEL SECURITY;\n# Use server-side auth, not anon keys in frontend",
+        },
+        "js_analysis": {
+            "title": "JavaScript Security Issue",
+            "fix": "Remove hardcoded credentials from JavaScript. Use server-side proxies for API calls. Implement proper content security policies.",
+            "code": "// Use environment variables at build time\nconst apiUrl = process.env.REACT_APP_API_URL;",
+        },
         "disclosure": {
             "title": "Information Disclosure",
             "fix": "Disable debug mode in production. Remove sensitive files from webroot. Configure proper error handling. Review response headers.",
@@ -233,57 +245,213 @@ class Reporter:
             "code": "# Consult security documentation",
         })
     
+    def _colorize_log_line(self, line: str) -> str:
+        import html as html_escape
+        escaped = html_escape.escape(line)
+        if line.strip().startswith("[+]"):
+            return f'<span style="color: #00ff00;">{escaped}</span>'
+        elif line.strip().startswith("[!!!]"):
+            return f'<span style="color: #ff0000; font-weight: bold;">{escaped}</span>'
+        elif line.strip().startswith("[!]"):
+            return f'<span style="color: #ffaa00;">{escaped}</span>'
+        elif line.strip().startswith("[-]"):
+            return f'<span style="color: #ff6666;">{escaped}</span>'
+        elif line.strip().startswith("[*]"):
+            return f'<span style="color: #00aaff;">{escaped}</span>'
+        elif "SENSITIVE" in line.upper() or "CRITICAL" in line.upper():
+            return f'<span style="color: #ff4444; font-weight: bold;">{escaped}</span>'
+        elif "FOUND" in line.upper() or "SUCCESS" in line.upper():
+            return f'<span style="color: #00ff00;">{escaped}</span>'
+        return escaped
+    
+    def _redact_sensitive_value(self, value: str, value_type: str = None) -> str:
+        if not value or len(value) < 8:
+            return "***"
+        if value_type in ["credit_card", "ssn", "phone"]:
+            return value[:4] + "*" * (len(value) - 8) + value[-4:]
+        elif value_type in ["email"]:
+            parts = value.split("@")
+            if len(parts) == 2:
+                return parts[0][:2] + "***@" + parts[1]
+            return value[:3] + "***"
+        elif value_type in ["jwt", "api_key", "token", "password", "hash"]:
+            return value[:10] + "..." + value[-4:] if len(value) > 20 else value[:5] + "***"
+        else:
+            return value[:6] + "***" + value[-4:] if len(value) > 12 else value[:3] + "***"
+    
     def _format_exploit_data_html(self, exploit_data):
         if not exploit_data:
             return ""
         
-        html = '<div class="exploit-data" style="background: #1a0a0a; border: 1px solid #dc3545; border-radius: 8px; padding: 15px; margin-top: 15px;">'
-        html += '<h4 style="color: #dc3545; margin-bottom: 10px;">⚠️ EXPLOITATION DATA EXTRACTED</h4>'
+        import html as html_escape
+        
+        html = '<div class="exploit-data" style="background: #1a0a0a; border: 2px solid #dc3545; border-radius: 8px; padding: 20px; margin-top: 15px;">'
+        html += '<h4 style="color: #dc3545; margin-bottom: 15px; font-size: 1.2em;">⚠️ EXPLOITATION DATA EXTRACTED</h4>'
         
         if exploit_data.get("credentials"):
             creds = exploit_data["credentials"]
-            html += '<div style="margin-bottom: 10px;"><strong>Credentials:</strong><pre style="background: #0a0a0f; padding: 10px; border-radius: 4px; overflow-x: auto;">'
+            html += '<div style="margin-bottom: 15px;"><strong style="color: #ff6666;">🔑 Credentials:</strong><pre style="background: #0a0a0f; padding: 10px; border-radius: 4px; overflow-x: auto;">'
             for k, v in creds.items():
                 if v:
                     html += f'{k}: {str(v)[:100]}\n'
             html += '</pre></div>'
         
         if exploit_data.get("files"):
-            html += '<div style="margin-bottom: 10px;"><strong>Files Extracted:</strong><ul>'
+            html += '<div style="margin-bottom: 15px;"><strong style="color: #ff6666;">📁 Files Extracted:</strong><ul style="margin-top: 5px;">'
             for filepath, content in list(exploit_data["files"].items())[:5]:
-                html += f'<li><code>{filepath}</code>: {len(content)} bytes</li>'
+                html += f'<li><code>{html_escape.escape(filepath)}</code>: {len(content)} bytes</li>'
             html += '</ul></div>'
         
         if exploit_data.get("secrets"):
-            html += '<div style="margin-bottom: 10px;"><strong>Secrets Found:</strong><ul>'
+            html += '<div style="margin-bottom: 15px;"><strong style="color: #ff6666;">🔐 Secrets Found:</strong><ul style="margin-top: 5px;">'
             for secret in exploit_data["secrets"][:10]:
-                html += f'<li>{secret.get("type")}: <code>{str(secret.get("value", ""))[:50]}...</code></li>'
+                html += f'<li>{secret.get("type")}: <code>{html_escape.escape(str(secret.get("value", ""))[:50])}...</code></li>'
             html += '</ul></div>'
         
+        if exploit_data.get("baas_credentials"):
+            total_tables = 0
+            total_rows = 0
+            total_sensitive = 0
+            for cred in exploit_data["baas_credentials"]:
+                total_tables += len(cred.get("accessible_tables", []))
+                for tbl, data in cred.get("extracted_data", {}).items():
+                    total_rows += data.get("row_count", 0)
+                    total_sensitive += len(data.get("sensitive_values", []))
+            
+            html += '<div style="margin-bottom: 15px; background: #2a0a0a; padding: 20px; border-radius: 8px; border: 2px solid #ff4444;">'
+            html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">'
+            html += '<strong style="color: #ff4444; font-size: 1.2em;">🔓 BACKEND DATABASE EXPOSURE</strong>'
+            html += '<div style="display: flex; gap: 15px;">'
+            if total_tables > 0:
+                html += f'<span style="background: #1a1a2e; padding: 5px 12px; border-radius: 4px; color: #00ff00;">{total_tables} Tables</span>'
+            if total_rows > 0:
+                html += f'<span style="background: #1a1a2e; padding: 5px 12px; border-radius: 4px; color: #00aaff;">{total_rows} Rows</span>'
+            if total_sensitive > 0:
+                html += f'<span style="background: #ff0000; padding: 5px 12px; border-radius: 4px; color: #fff; font-weight: bold;">{total_sensitive} Sensitive Values</span>'
+            html += '</div></div>'
+            
+            for cred in exploit_data["baas_credentials"][:5]:
+                status = "✓ EXPLOITED - DATA EXTRACTED" if cred.get("validated") else "⚠ Detected (not exploitable)"
+                status_color = "#00ff00" if cred.get("validated") else "#ffaa00"
+                
+                html += f'<div style="margin-top: 15px; padding: 15px; background: #1a0a0a; border-radius: 8px; border-left: 4px solid {status_color};">'
+                
+                html += '<div style="margin-bottom: 10px;">'
+                html += f'<strong style="color: #00aaff; font-size: 1.1em;">{html_escape.escape(cred.get("provider", "Unknown").upper())}</strong>'
+                html += f' <code style="background: #0a0a0f; padding: 2px 8px; border-radius: 4px;">{html_escape.escape(cred.get("project_url", ""))}</code>'
+                html += f'<br/><span style="color: {status_color}; font-weight: bold;">{status}</span>'
+                html += '</div>'
+                
+                if cred.get("source_file") or cred.get("line_number"):
+                    html += '<div style="background: #0a0a0f; padding: 10px; border-radius: 4px; margin-bottom: 10px;">'
+                    html += '<strong style="color: #888;">📍 Discovery Location:</strong><br/>'
+                    if cred.get("source_file"):
+                        html += f'<code style="color: #00aaff;">{html_escape.escape(cred.get("source_file", ""))}</code>'
+                    if cred.get("line_number"):
+                        html += f' <span style="color: #888;">Line {cred.get("line_number")}</span>'
+                    html += '</div>'
+                
+                if cred.get("api_key"):
+                    key_preview = self._redact_sensitive_value(cred.get("api_key", ""), "api_key")
+                    html += f'<div style="margin-bottom: 10px;"><strong style="color: #888;">🔑 API Key:</strong> <code style="color: #ff6666;">{html_escape.escape(key_preview)}</code></div>'
+                
+                if cred.get("accessible_tables"):
+                    html += f'<div style="margin-bottom: 10px;"><strong style="color: #00ff00;">✓ Accessible Tables ({len(cred["accessible_tables"])}):</strong><br/>'
+                    html += f'<code style="color: #00ff00; display: block; padding: 8px; background: #0a0a0f; border-radius: 4px; margin-top: 5px;">{html_escape.escape(", ".join(cred["accessible_tables"][:15]))}</code>'
+                    html += '</div>'
+                
+                if cred.get("sensitive_data_types"):
+                    html += '<div style="background: #3a0a0a; padding: 10px; border-radius: 4px; margin-bottom: 10px; border: 1px solid #ff0000;">'
+                    html += '<strong style="color: #ff0000;">⚠️ SENSITIVE DATA FIELDS FOUND:</strong><br/>'
+                    html += f'<code style="color: #ff6666;">{html_escape.escape(", ".join(cred["sensitive_data_types"][:20]))}</code>'
+                    html += '</div>'
+                
+                if cred.get("extracted_data"):
+                    html += '<div style="margin-bottom: 10px;"><strong style="color: #fff;">📊 Extracted Data Summary:</strong>'
+                    html += '<table style="width: 100%; margin-top: 8px; border-collapse: collapse; background: #0a0a0f;">'
+                    html += '<tr style="background: #1a1a2e;"><th style="padding: 8px; border: 1px solid #333; text-align: left; color: #00aaff;">Table</th>'
+                    html += '<th style="padding: 8px; border: 1px solid #333; text-align: center; color: #00aaff;">Rows</th>'
+                    html += '<th style="padding: 8px; border: 1px solid #333; text-align: left; color: #00aaff;">Columns</th>'
+                    html += '<th style="padding: 8px; border: 1px solid #333; text-align: left; color: #00aaff;">Sensitive Fields</th>'
+                    html += '<th style="padding: 8px; border: 1px solid #333; text-align: center; color: #00aaff;">Values</th></tr>'
+                    for table, data in list(cred["extracted_data"].items())[:10]:
+                        sensitive_count = len(data.get("sensitive_values", []))
+                        row_style = "background: #2a0a0a;" if sensitive_count > 0 else ""
+                        value_style = "color: #ff0000; font-weight: bold;" if sensitive_count > 0 else "color: #888;"
+                        columns = data.get("columns", [])
+                        col_display = ", ".join(columns[:5]) + ("..." if len(columns) > 5 else "")
+                        html += f'<tr style="{row_style}">'
+                        html += f'<td style="padding: 8px; border: 1px solid #333;"><code>{html_escape.escape(table)}</code></td>'
+                        html += f'<td style="padding: 8px; border: 1px solid #333; text-align: center;">{data.get("row_count", 0)}</td>'
+                        html += f'<td style="padding: 8px; border: 1px solid #333; font-size: 0.85em; color: #888;">{html_escape.escape(col_display)}</td>'
+                        html += f'<td style="padding: 8px; border: 1px solid #333; color: #ff6666;">{html_escape.escape(", ".join(data.get("sensitive_fields", [])))}</td>'
+                        html += f'<td style="padding: 8px; border: 1px solid #333; text-align: center; {value_style}">{sensitive_count}</td>'
+                        html += '</tr>'
+                    html += '</table></div>'
+                    
+                    has_sensitive_values = any(len(d.get("sensitive_values", [])) > 0 for d in cred.get("extracted_data", {}).values())
+                    if has_sensitive_values:
+                        html += '<details style="margin-top: 10px;"><summary style="cursor: pointer; color: #ff4444; font-weight: bold;">🔴 View Sensitive Values Extracted (Redacted)</summary>'
+                        html += '<div style="background: #0a0a0f; padding: 15px; margin-top: 5px; border-radius: 4px; border: 1px solid #ff0000;">'
+                        for table, data in cred.get("extracted_data", {}).items():
+                            if data.get("sensitive_values"):
+                                html += f'<div style="margin-bottom: 10px;"><strong style="color: #ff6666;">{html_escape.escape(table)}:</strong><ul style="margin: 5px 0 0 20px;">'
+                                for sv in data["sensitive_values"][:10]:
+                                    col = sv.get("column", "unknown")
+                                    vtype = sv.get("type", "unknown")
+                                    val = self._redact_sensitive_value(str(sv.get("value", "")), vtype)
+                                    html += f'<li><code>{html_escape.escape(col)}</code> ({vtype}): <span style="color: #ff4444;">{html_escape.escape(val)}</span></li>'
+                                if len(data["sensitive_values"]) > 10:
+                                    html += f'<li style="color: #888;">... and {len(data["sensitive_values"]) - 10} more</li>'
+                                html += '</ul></div>'
+                        html += '</div></details>'
+                
+                if cred.get("exploitation_log"):
+                    log_count = len(cred["exploitation_log"])
+                    html += f'<details style="margin-top: 10px;"><summary style="cursor: pointer; color: #00aaff;">📜 View Full Exploitation Log ({log_count} entries)</summary>'
+                    html += '<pre style="background: #0a0a0f; padding: 15px; margin-top: 5px; border-radius: 4px; font-size: 0.85em; max-height: 400px; overflow-y: auto; line-height: 1.5;">'
+                    for log_line in cred["exploitation_log"]:
+                        html += self._colorize_log_line(log_line) + '\n'
+                    html += '</pre></details>'
+                
+                api_key = cred.get("api_key", "YOUR_KEY")
+                project_url = cred.get("project_url", "")
+                if cred.get("validated") and cred.get("accessible_tables"):
+                    first_table = cred["accessible_tables"][0]
+                    html += '<details style="margin-top: 10px;"><summary style="cursor: pointer; color: #ff6666;">🔴 Proof of Concept (curl)</summary>'
+                    html += '<pre style="background: #0a0a0f; padding: 15px; margin-top: 5px; border-radius: 4px; font-size: 0.85em; overflow-x: auto;">'
+                    html += f'curl -X GET "{html_escape.escape(project_url)}/rest/v1/{html_escape.escape(first_table)}?select=*&amp;limit=10" \\\n'
+                    html += f'  -H "apikey: {html_escape.escape(api_key[:20])}..." \\\n'
+                    html += f'  -H "Authorization: Bearer {html_escape.escape(api_key[:20])}..."'
+                    html += '</pre></details>'
+                
+                html += '</div>'
+            html += '</div>'
+        
         if exploit_data.get("users"):
-            html += '<div style="margin-bottom: 10px;"><strong>Users Discovered:</strong> '
-            html += ', '.join([u.get("name", "") for u in exploit_data["users"][:10]])
+            html += '<div style="margin-bottom: 15px;"><strong style="color: #ff6666;">👤 Users Discovered:</strong> '
+            html += ', '.join([html_escape.escape(u.get("name", "")) for u in exploit_data["users"][:10]])
             html += '</div>'
         
         if exploit_data.get("internal_services"):
-            html += '<div style="margin-bottom: 10px;"><strong>Internal Services:</strong><ul>'
+            html += '<div style="margin-bottom: 15px;"><strong style="color: #ff6666;">🖥️ Internal Services:</strong><ul style="margin-top: 5px;">'
             for svc in exploit_data["internal_services"][:10]:
-                html += f'<li>Port {svc.get("port")}: {svc.get("service")} (status: {svc.get("status")})</li>'
+                html += f'<li>Port {svc.get("port")}: {html_escape.escape(str(svc.get("service")))} (status: {svc.get("status")})</li>'
             html += '</ul></div>'
         
         if exploit_data.get("cloud") or exploit_data.get("metadata"):
-            html += f'<div style="margin-bottom: 10px;"><strong>Cloud Provider:</strong> {exploit_data.get("cloud", "Unknown")}</div>'
+            html += f'<div style="margin-bottom: 15px;"><strong style="color: #ff6666;">☁️ Cloud Provider:</strong> {html_escape.escape(str(exploit_data.get("cloud", "Unknown")))}</div>'
         
         if exploit_data.get("rce_output"):
-            html += '<div style="margin-bottom: 10px;"><strong>RCE Output:</strong><pre style="background: #0a0a0f; padding: 10px; border-radius: 4px; overflow-x: auto;">'
+            html += '<div style="margin-bottom: 15px;"><strong style="color: #ff0000;">💀 RCE Output:</strong><pre style="background: #0a0a0f; padding: 10px; border-radius: 4px; overflow-x: auto;">'
             for cmd, output in list(exploit_data["rce_output"].items())[:5]:
-                html += f'[{cmd}]: {str(output)[:200]}\n'
+                html += f'<span style="color: #00aaff;">[{html_escape.escape(cmd)}]</span>: {html_escape.escape(str(output)[:200])}\n'
             html += '</pre></div>'
         
         if exploit_data.get("env_vars"):
-            html += '<div style="margin-bottom: 10px;"><strong>Environment Variables:</strong><pre style="background: #0a0a0f; padding: 10px; border-radius: 4px; overflow-x: auto;">'
+            html += '<div style="margin-bottom: 15px;"><strong style="color: #ff6666;">🔧 Environment Variables:</strong><pre style="background: #0a0a0f; padding: 10px; border-radius: 4px; overflow-x: auto;">'
             for k, v in list(exploit_data["env_vars"].items())[:10]:
-                html += f'{k}={str(v)[:80]}\n'
+                html += f'{html_escape.escape(k)}={html_escape.escape(str(v)[:80])}\n'
             html += '</pre></div>'
         
         html += '</div>'
@@ -365,10 +533,50 @@ class Reporter:
             enriched = r.copy()
             enriched["cvss"] = self._get_cvss(r)
             enriched["remediation"] = self._get_remediation(r)
+            
+            enriched["discovery_metadata"] = {
+                "technique": r.get("technique"),
+                "payload": r.get("payload"),
+                "injection_point": r.get("injection_point"),
+                "http_method": r.get("http_method"),
+                "status_code": r.get("status_code"),
+                "response_time": r.get("response_time"),
+                "content_length": r.get("content_length"),
+                "detection_method": r.get("detection_method"),
+                "matched_pattern": r.get("matched_pattern"),
+            }
+            
+            enriched["validation"] = {
+                "validated": r.get("validated", False),
+                "confidence": r.get("confidence", "MEDIUM"),
+                "verification_method": r.get("verification_method"),
+                "false_positive_check": r.get("false_positive_check"),
+                "exploitation_success": r.get("exploitation_success", False),
+            }
+            
+            if r.get("exploit_data", {}).get("baas_credentials"):
+                baas_summary = []
+                for cred in r["exploit_data"]["baas_credentials"]:
+                    total_rows = sum(t.get("row_count", 0) for t in cred.get("extracted_data", {}).values())
+                    total_sensitive = sum(len(t.get("sensitive_values", [])) for t in cred.get("extracted_data", {}).values())
+                    baas_summary.append({
+                        "provider": cred.get("provider"),
+                        "project_url": cred.get("project_url"),
+                        "validated": cred.get("validated"),
+                        "tables_accessible": len(cred.get("accessible_tables", [])),
+                        "total_rows_extracted": total_rows,
+                        "sensitive_values_found": total_sensitive,
+                        "sensitive_fields": cred.get("sensitive_data_types", []),
+                        "source_file": cred.get("source_file"),
+                        "line_number": cred.get("line_number"),
+                    })
+                enriched["baas_exploitation_summary"] = baas_summary
+            
             enriched_results.append(enriched)
         
         data = {
             "scan_info": {
+                "scan_id": self.scan_id,
                 "timestamp": self.timestamp,
                 "targets": self.targets,
                 "modules": self.modules,
@@ -451,6 +659,60 @@ class Reporter:
                     </div>
                 """
             
+            import html as html_esc
+            
+            discovery_html = ""
+            if r.get('discovery') or r.get('payload') or r.get('technique') or r.get('exploitation_log'):
+                discovery_html = '<div style="background: #0a0a1a; border: 1px solid #1a1a3e; border-radius: 8px; padding: 15px; margin-top: 15px;">'
+                discovery_html += '<h4 style="color: #00d4ff; margin-bottom: 10px;">🔍 Discovery Details</h4>'
+                discovery_html += '<table style="width: 100%; border-collapse: collapse;">'
+                
+                if r.get('technique'):
+                    discovery_html += f'<tr><td style="padding: 5px; color: #888; width: 150px;">Technique:</td><td style="padding: 5px;"><code>{html_esc.escape(str(r.get("technique")))}</code></td></tr>'
+                if r.get('payload'):
+                    payload_display = str(r.get('payload', ''))[:200]
+                    discovery_html += f'<tr><td style="padding: 5px; color: #888;">Payload Used:</td><td style="padding: 5px;"><code style="color: #ff6666;">{html_esc.escape(payload_display)}</code></td></tr>'
+                if r.get('injection_point'):
+                    discovery_html += f'<tr><td style="padding: 5px; color: #888;">Injection Point:</td><td style="padding: 5px;"><code>{html_esc.escape(str(r.get("injection_point")))}</code></td></tr>'
+                if r.get('http_method'):
+                    discovery_html += f'<tr><td style="padding: 5px; color: #888;">HTTP Method:</td><td style="padding: 5px;">{html_esc.escape(str(r.get("http_method")))}</td></tr>'
+                if r.get('status_code'):
+                    discovery_html += f'<tr><td style="padding: 5px; color: #888;">Response Code:</td><td style="padding: 5px;">{r.get("status_code")}</td></tr>'
+                if r.get('response_time'):
+                    discovery_html += f'<tr><td style="padding: 5px; color: #888;">Response Time:</td><td style="padding: 5px;">{r.get("response_time")}ms</td></tr>'
+                if r.get('content_length'):
+                    discovery_html += f'<tr><td style="padding: 5px; color: #888;">Content Length:</td><td style="padding: 5px;">{r.get("content_length")} bytes</td></tr>'
+                if r.get('detection_method'):
+                    discovery_html += f'<tr><td style="padding: 5px; color: #888;">Detection Method:</td><td style="padding: 5px;">{html_esc.escape(str(r.get("detection_method")))}</td></tr>'
+                if r.get('matched_pattern'):
+                    discovery_html += f'<tr><td style="padding: 5px; color: #888;">Pattern Matched:</td><td style="padding: 5px;"><code>{html_esc.escape(str(r.get("matched_pattern"))[:100])}</code></td></tr>'
+                
+                discovery_html += '</table>'
+                
+                if r.get('exploitation_log') and isinstance(r.get('exploitation_log'), list):
+                    log_count = len(r['exploitation_log'])
+                    discovery_html += f'<details style="margin-top: 10px;"><summary style="cursor: pointer; color: #00aaff;">📜 Exploitation Log ({log_count} steps)</summary>'
+                    discovery_html += '<pre style="background: #0a0a0f; padding: 10px; margin-top: 5px; border-radius: 4px; font-size: 0.85em; max-height: 300px; overflow-y: auto;">'
+                    for log_line in r['exploitation_log']:
+                        discovery_html += self._colorize_log_line(str(log_line)) + '\n'
+                    discovery_html += '</pre></details>'
+                
+                discovery_html += '</div>'
+            
+            validation_html = ""
+            if r.get('validated') or r.get('verification_method') or r.get('false_positive_check'):
+                validation_html = '<div style="background: #0a1a0a; border: 1px solid #1a3a1a; border-radius: 8px; padding: 15px; margin-top: 15px;">'
+                validation_html += '<h4 style="color: #4ade80; margin-bottom: 10px;">✅ Validation</h4>'
+                if r.get('validated'):
+                    validation_html += f'<p><strong>Status:</strong> <span style="color: #00ff00;">CONFIRMED</span></p>'
+                if r.get('verification_method'):
+                    validation_html += f'<p><strong>Method:</strong> {html_esc.escape(str(r.get("verification_method")))}</p>'
+                if r.get('false_positive_check'):
+                    validation_html += f'<p><strong>FP Check:</strong> {html_esc.escape(str(r.get("false_positive_check")))}</p>'
+                if r.get('exploitation_success'):
+                    validation_html += f'<p><strong>Exploitation:</strong> <span style="color: #ff0000;">SUCCESSFUL</span></p>'
+                validation_html += '</div>'
+            
             findings_html += f"""
             <div class="finding" id="{finding_id}">
                 <div class="finding-header">
@@ -465,6 +727,8 @@ class Reporter:
                     <p><strong>Description:</strong> {r['description']}</p>
                     {f"<p><strong>Parameter:</strong> <code>{r.get('parameter')}</code></p>" if r.get('parameter') else ""}
                     {f"<p><strong>Evidence:</strong> <code>{str(r.get('evidence', ''))[:500]}</code></p>" if r.get('evidence') else ""}
+                    {discovery_html}
+                    {validation_html}
                     {self._format_exploit_data_html(r.get('exploit_data')) if r.get('exploit_data') else ""}
                     {request_html}
                     {self._format_response_data_html(r.get('response_data')) if r.get('response_data') else ""}
