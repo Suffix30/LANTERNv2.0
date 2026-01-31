@@ -66,3 +66,7 @@ agent/agent_black/results/
 
 # Development notes (private)
 DEV_TODO.md
+
+# Internal dev notes
+agent/docs/Agent-BLACK-Project-State.md
+agent/docs/Agent-BLACK-Roadmap.md
