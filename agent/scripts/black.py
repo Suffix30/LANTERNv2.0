@@ -1013,7 +1013,6 @@ foreach ($profile in $profiles) {
                     print("[BLACK] Usage: exec <command>")
                 continue
             
-            # ports <ip> - Direct port scan
             if user_input.lower().startswith("ports "):
                 target = user_input[6:].strip()
                 if target:
@@ -1031,7 +1030,7 @@ foreach ($profile in $profiles) {
                                 open_ports.append(port)
                                 print(f"  [+] Port {port}: OPEN")
                             s.close()
-                        except Exception as e:
+                        except Exception:
                             pass
                     if open_ports:
                         print(f"\n[RESULT] Found {len(open_ports)} open ports: {open_ports}")
