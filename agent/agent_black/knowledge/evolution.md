@@ -73,18 +73,17 @@ For each engagement:
    - Success rates
    - Stealth ratings
 
-### Example: OMV Learning
+### Example: NAS Learning
 
-Before OMV engagement:
+Before NAS engagement:
 - Agent BLACK knew generic web attacks
-- No specific OMV knowledge
+- No specific NAS knowledge
 
-After OMV engagement:
-- Knows OMV default creds: admin:openmediavault
-- Knows API endpoint: /rpc.php
-- Knows UserMgmt.setUser creates system users
-- Knows to check Ssh.get for root login status
-- Learned backdoor user > brute-force (stealthier)
+After NAS engagement:
+- Knows common NAS default credentials
+- Knows API endpoints for user management
+- Knows to check SSH configuration status
+- Learned stealth techniques for persistence
 
 ### Future Improvements
 

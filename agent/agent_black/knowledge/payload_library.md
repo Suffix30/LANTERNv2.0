@@ -76,7 +76,7 @@ payloads/learned/
 from pathlib import Path
 
 def load_payloads(category):
-    payload_dir = Path("C:/Users/NETSEK/Documents/Projects/LANTERNv2.0/payloads")
+    payload_dir = Path("payloads")
     payload_file = payload_dir / f"{category}.txt"
     
     if payload_file.exists():
@@ -105,7 +105,7 @@ If I find a payload that works but isn't in the file, I APPEND it:
 
 ```python
 def add_payload_to_file(category, new_payload):
-    payload_dir = Path("C:/Users/NETSEK/Documents/Projects/LANTERNv2.0/payloads")
+    payload_dir = Path("payloads")
     payload_file = payload_dir / f"{category}.txt"
     
     existing = payload_file.read_text() if payload_file.exists() else ""
@@ -275,7 +275,7 @@ If I discover a new vulnerability class, I can create new payload files:
 
 ```python
 def create_new_payload_category(category, initial_payloads):
-    payload_dir = Path("C:/Users/NETSEK/Documents/Projects/LANTERNv2.0/payloads")
+    payload_dir = Path("payloads")
     new_file = payload_dir / f"{category}.txt"
     
     new_file.write_text("\n".join(initial_payloads))
