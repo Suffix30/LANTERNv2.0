@@ -1,0 +1,116 @@
+{
+  "payloads": [
+    {
+      "file": "payloads\\__init__.py",
+      "size": 0
+    },
+    {
+      "file": "payloads\\cmdi.txt",
+      "size": 924
+    },
+    {
+      "file": "payloads\\crlf.txt",
+      "size": 1315
+    },
+    {
+      "file": "payloads\\dorks\\admin_login.txt",
+      "size": 2629
+    },
+    {
+      "file": "payloads\\dorks\\backups.txt",
+      "size": 2208
+    },
+    {
+      "file": "payloads\\dorks\\cms_vulns.txt",
+      "size": 2968
+    },
+    {
+      "file": "payloads\\dorks\\database_files.txt",
+      "size": 3386
+    },
+    {
+      "file": "payloads\\dorks\\error_pages.txt",
+      "size": 2714
+    },
+    {
+      "file": "payloads\\dorks\\sensitive_files.txt",
+      "size": 3032
+    },
+    {
+      "file": "payloads\\headers_bypass.txt",
+      "size": 1131
+    },
+    {
+      "file": "payloads\\learned\\index.json",
+      "size": 6577
+    },
+    {
+      "file": "payloads\\learned\\lfi.txt",
+      "size": 35
+    },
+    {
+      "file": "payloads\\learned\\redirect.txt",
+      "size": 12
+    },
+    {
+      "file": "payloads\\learned\\sqli.txt",
+      "size": 83
+    },
+    {
+      "file": "payloads\\learned\\websocket.txt",
+      "size": 372
+    },
+    {
+      "file": "payloads\\learned\\xss.txt",
+      "size": 101
+    },
+    {
+      "file": "payloads\\lfi.txt",
+      "size": 2940
+    },
+    {
+      "file": "payloads\\paths.txt",
+      "size": 1557
+    },
+    {
+      "file": "payloads\\redirect.txt",
+      "size": 1404
+    },
+    {
+      "file": "payloads\\smuggle.txt",
+      "size": 864
+    },
+    {
+      "file": "payloads\\sqli.txt",
+      "size": 2351
+    },
+    {
+      "file": "payloads\\sqli_advanced.txt",
+      "size": 2732
+    },
+    {
+      "file": "payloads\\ssrf.txt",
+      "size": 2794
+    },
+    {
+      "file": "payloads\\ssti.txt",
+      "size": 3051
+    },
+    {
+      "file": "payloads\\xss.txt",
+      "size": 4149
+    },
+    {
+      "file": "payloads\\xss_advanced.txt",
+      "size": 3093
+    },
+    {
+      "file": "payloads\\xss_master.txt",
+      "size": 4756
+    },
+    {
+      "file": "payloads\\xxe.txt",
+      "size": 2567
+    }
+  ]
+}

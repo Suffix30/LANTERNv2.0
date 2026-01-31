@@ -46,9 +46,18 @@ Issues = "https://github.com/Suffix30/LANTERNv2.0/issues"
 
 [project.scripts]
 lantern = "core.cli:run"
+black = "agent.cli:main"
+
+[project.optional-dependencies]
+agent = [
+    "ollama>=0.1.0",
+    "langchain>=0.1.0",
+    "chromadb>=0.4.0",
+    "PyMuPDF>=1.23.0",
+]
 
 [tool.setuptools]
-packages = ["core", "modules", "payloads", "presets"]
+packages = ["core", "modules", "payloads", "presets", "agent", "agent.scripts", "agent.agents", "agent.agent_black", "agent.external", "agent.external.modules", "agent.integration", "agent.pi_integration"]
 include-package-data = true
 
 [tool.setuptools.package-data]

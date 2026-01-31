@@ -1,0 +1,13 @@
+[project]
+name = "agent-black"
+version = "0.1.0"
+description = "Agent BLACK - AI companion for LANTERN CLI"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+agent-black = "agent_black.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+

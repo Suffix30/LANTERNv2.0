@@ -3,3 +3,4 @@ include LICENSE
 include requirements.txt
 recursive-include payloads *.txt
 recursive-include presets *.yml
+recursive-include agent *.py *.md *.json *.yml *.js *.html

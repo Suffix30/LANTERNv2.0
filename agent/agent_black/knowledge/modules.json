@@ -1,0 +1,552 @@
+{
+  "all": [
+    "sqli",
+    "xss",
+    "ssrf",
+    "lfi",
+    "ssti",
+    "cmdi",
+    "xxe",
+    "crlf",
+    "hpp",
+    "auth",
+    "jwt",
+    "oauth",
+    "mfa",
+    "session",
+    "cookie",
+    "csrf",
+    "ldap",
+    "idor",
+    "massassign",
+    "cors",
+    "accessctl",
+    "api",
+    "graphql",
+    "websocket",
+    "apiver",
+    "dom",
+    "prototype",
+    "clickjack",
+    "payment",
+    "race",
+    "captcha",
+    "account",
+    "logic",
+    "headers",
+    "ssl",
+    "cache",
+    "upload",
+    "download",
+    "fingerprint",
+    "disclosure",
+    "secrets",
+    "subdomain",
+    "dork",
+    "cve",
+    "dirbust",
+    "smuggle",
+    "deserial",
+    "fuzz",
+    "redirect",
+    "techdetect",
+    "waf",
+    "takeover",
+    "cloud",
+    "paramfind",
+    "csp",
+    "h2smuggle",
+    "cachepois",
+    "cdn",
+    "brokenlinks",
+    "embed",
+    "hostinject",
+    "emailinject"
+  ],
+  "fast": [
+    "waf",
+    "headers",
+    "cors",
+    "disclosure",
+    "fingerprint",
+    "secrets",
+    "clickjack",
+    "cve",
+    "ssl",
+    "cookie",
+    "dork",
+    "techdetect"
+  ],
+  "deep": [
+    "sqli",
+    "xss",
+    "ssrf",
+    "lfi",
+    "ssti",
+    "cmdi",
+    "xxe",
+    "ldap",
+    "oauth",
+    "mfa",
+    "jwt",
+    "massassign",
+    "prototype",
+    "fuzz",
+    "smuggle",
+    "crlf",
+    "upload",
+    "hpp",
+    "cache",
+    "race",
+    "dom",
+    "session",
+    "deserial",
+    "payment",
+    "account",
+    "download",
+    "dirbust"
+  ],
+  "modules": [
+    {
+      "name": "accessctl",
+      "description": "Access Control / Privilege Escalation Scanner",
+      "category": "Access",
+      "exploitable": true,
+      "file": "modules\\accessctl.py"
+    },
+    {
+      "name": "account",
+      "description": "Account & Registration Security Scanner",
+      "category": "Business",
+      "exploitable": false,
+      "file": "modules\\account.py"
+    },
+    {
+      "name": "api",
+      "description": "REST API Security Scanner",
+      "category": "API",
+      "exploitable": false,
+      "file": "modules\\api.py"
+    },
+    {
+      "name": "apiver",
+      "description": "API Version Discovery Scanner",
+      "category": "API",
+      "exploitable": false,
+      "file": "modules\\apiver.py"
+    },
+    {
+      "name": "auth",
+      "description": "Authentication Security Scanner",
+      "category": "Auth",
+      "exploitable": false,
+      "file": "modules\\auth.py"
+    },
+    {
+      "name": "base",
+      "description": "Base module",
+      "category": null,
+      "exploitable": false,
+      "file": "modules\\base.py"
+    },
+    {
+      "name": "brokenlinks",
+      "description": "Broken Links Checker",
+      "category": "Recon",
+      "exploitable": false,
+      "file": "modules\\brokenlinks.py"
+    },
+    {
+      "name": "cache",
+      "description": "Web Cache Poisoning and Deception Scanner",
+      "category": "Config",
+      "exploitable": false,
+      "file": "modules\\cache.py"
+    },
+    {
+      "name": "cachepois",
+      "description": "Web Cache Poisoning Scanner",
+      "category": "Advanced",
+      "exploitable": true,
+      "file": "modules\\cachepois.py"
+    },
+    {
+      "name": "captcha",
+      "description": "CAPTCHA & Rate Limit Bypass Scanner",
+      "category": "Business",
+      "exploitable": false,
+      "file": "modules\\captcha.py"
+    },
+    {
+      "name": "cdn",
+      "description": "CDN Detection",
+      "category": "Config",
+      "exploitable": false,
+      "file": "modules\\cdn.py"
+    },
+    {
+      "name": "clickjack",
+      "description": "Clickjacking Vulnerability Scanner",
+      "category": "Client",
+      "exploitable": false,
+      "file": "modules\\clickjack.py"
+    },
+    {
+      "name": "cloud",
+      "description": "Cloud Misconfiguration Scanner",
+      "category": "Recon",
+      "exploitable": true,
+      "file": "modules\\cloud.py"
+    },
+    {
+      "name": "cmdi",
+      "description": "OS Command Injection Scanner",
+      "category": "Injection",
+      "exploitable": true,
+      "file": "modules\\cmdi.py"
+    },
+    {
+      "name": "cookie",
+      "description": "Cookie Security Scanner",
+      "category": "Auth",
+      "exploitable": false,
+      "file": "modules\\cookie.py"
+    },
+    {
+      "name": "cors",
+      "description": "CORS Misconfiguration Scanner",
+      "category": "Access",
+      "exploitable": false,
+      "file": "modules\\cors.py"
+    },
+    {
+      "name": "crlf",
+      "description": "CRLF Injection / HTTP Response Splitting Scanner",
+      "category": "Injection",
+      "exploitable": true,
+      "file": "modules\\crlf.py"
+    },
+    {
+      "name": "csp",
+      "description": "Content Security Policy Analyzer",
+      "category": "Config",
+      "exploitable": false,
+      "file": "modules\\csp.py"
+    },
+    {
+      "name": "csrf",
+      "description": "Cross-Site Request Forgery Scanner",
+      "category": "Auth",
+      "exploitable": false,
+      "file": "modules\\csrf.py"
+    },
+    {
+      "name": "cve",
+      "description": "Known CVE and CMS Vulnerability Scanner",
+      "category": "Recon",
+      "exploitable": false,
+      "file": "modules\\cve.py"
+    },
+    {
+      "name": "deserial",
+      "description": "Insecure Deserialization Scanner with Gadget Chains",
+      "category": "Advanced",
+      "exploitable": true,
+      "file": "modules\\deserial.py"
+    },
+    {
+      "name": "dirbust",
+      "description": "Directory & File Brute Force Scanner",
+      "category": null,
+      "exploitable": false,
+      "file": "modules\\dirbust.py"
+    },
+    {
+      "name": "disclosure",
+      "description": "Information Disclosure Scanner",
+      "category": "Recon",
+      "exploitable": false,
+      "file": "modules\\disclosure.py"
+    },
+    {
+      "name": "dom",
+      "description": "DOM-based Vulnerability Scanner",
+      "category": "Client",
+      "exploitable": true,
+      "file": "modules\\dom.py"
+    },
+    {
+      "name": "dork",
+      "description": "Google Dork Generator for Target Recon",
+      "category": "Recon",
+      "exploitable": false,
+      "file": "modules\\dork.py"
+    },
+    {
+      "name": "download",
+      "description": "File Download & Export Security Scanner",
+      "category": "Config",
+      "exploitable": false,
+      "file": "modules\\download.py"
+    },
+    {
+      "name": "emailinject",
+      "description": "Email Header Injection (CRLF in email-sending forms) Scanner",
+      "category": "Injection",
+      "exploitable": false,
+      "file": "modules\\emailinject.py"
+    },
+    {
+      "name": "embed",
+      "description": "Embedded Objects Scanner",
+      "category": "Client",
+      "exploitable": false,
+      "file": "modules\\embed.py"
+    },
+    {
+      "name": "fingerprint",
+      "description": "Technology Fingerprinting",
+      "category": "Recon",
+      "exploitable": false,
+      "file": "modules\\fingerprint.py"
+    },
+    {
+      "name": "fuzz",
+      "description": "Smart Parameter Fuzzer",
+      "category": "Advanced",
+      "exploitable": false,
+      "file": "modules\\fuzz.py"
+    },
+    {
+      "name": "graphql",
+      "description": "GraphQL Security Scanner",
+      "category": "API",
+      "exploitable": true,
+      "file": "modules\\graphql.py"
+    },
+    {
+      "name": "h2smuggle",
+      "description": "HTTP/2 Request Smuggling Scanner",
+      "category": "Advanced",
+      "exploitable": true,
+      "file": "modules\\h2smuggle.py"
+    },
+    {
+      "name": "headers",
+      "description": "Security Headers Analyzer",
+      "category": "Config",
+      "exploitable": false,
+      "file": "modules\\headers.py"
+    },
+    {
+      "name": "hostinject",
+      "description": "Host Header / Password Reset Poisoning Scanner",
+      "category": "Auth",
+      "exploitable": false,
+      "file": "modules\\hostinject.py"
+    },
+    {
+      "name": "hpp",
+      "description": "HTTP Parameter Pollution Scanner",
+      "category": "Injection",
+      "exploitable": false,
+      "file": "modules\\hpp.py"
+    },
+    {
+      "name": "idor",
+      "description": "Insecure Direct Object Reference Scanner",
+      "category": "Access",
+      "exploitable": true,
+      "file": "modules\\idor.py"
+    },
+    {
+      "name": "jwt",
+      "description": "JWT Token Full Attack Suite",
+      "category": "Auth",
+      "exploitable": true,
+      "file": "modules\\jwt.py"
+    },
+    {
+      "name": "ldap",
+      "description": "LDAP Injection & Active Directory Scanner",
+      "category": "Injection",
+      "exploitable": true,
+      "file": "modules\\ldap.py"
+    },
+    {
+      "name": "lfi",
+      "description": "Local File Inclusion / Path Traversal Scanner",
+      "category": "Server-Side",
+      "exploitable": true,
+      "file": "modules\\lfi.py"
+    },
+    {
+      "name": "logic",
+      "description": "Business Logic / Parameter Tampering Scanner",
+      "category": "Business",
+      "exploitable": true,
+      "file": "modules\\logic.py"
+    },
+    {
+      "name": "massassign",
+      "description": "Mass Assignment / Hidden Parameter Injection Scanner",
+      "category": "Access",
+      "exploitable": false,
+      "file": "modules\\massassign.py"
+    },
+    {
+      "name": "mfa",
+      "description": "Multi-Factor Authentication Bypass Scanner",
+      "category": "Auth",
+      "exploitable": true,
+      "file": "modules\\mfa.py"
+    },
+    {
+      "name": "oauth",
+      "description": "OAuth 2.0 Misconfiguration Scanner",
+      "category": "Auth",
+      "exploitable": true,
+      "file": "modules\\oauth.py"
+    },
+    {
+      "name": "paramfind",
+      "description": "Hidden Parameter Discovery",
+      "category": "Recon",
+      "exploitable": false,
+      "file": "modules\\paramfind.py"
+    },
+    {
+      "name": "payment",
+      "description": "E-commerce & Payment Security Scanner",
+      "category": "Business",
+      "exploitable": false,
+      "file": "modules\\payment.py"
+    },
+    {
+      "name": "prototype",
+      "description": "JavaScript Prototype Pollution Scanner",
+      "category": "Client",
+      "exploitable": false,
+      "file": "modules\\prototype.py"
+    },
+    {
+      "name": "race",
+      "description": "Race Condition Scanner",
+      "category": "Business",
+      "exploitable": true,
+      "file": "modules\\race.py"
+    },
+    {
+      "name": "redirect",
+      "description": "Open Redirect Scanner",
+      "category": "Advanced",
+      "exploitable": true,
+      "file": "modules\\redirect.py"
+    },
+    {
+      "name": "secrets",
+      "description": "Secrets and Credentials Scanner",
+      "category": "Recon",
+      "exploitable": false,
+      "file": "modules\\secrets.py"
+    },
+    {
+      "name": "session",
+      "description": "Session Management Security Scanner",
+      "category": "Auth",
+      "exploitable": false,
+      "file": "modules\\session.py"
+    },
+    {
+      "name": "smuggle",
+      "description": "HTTP Request Smuggling Scanner",
+      "category": "Advanced",
+      "exploitable": false,
+      "file": "modules\\smuggle.py"
+    },
+    {
+      "name": "sqli",
+      "description": "SQL Injection Scanner with Auto Exploitation",
+      "category": "Injection",
+      "exploitable": true,
+      "file": "modules\\sqli.py"
+    },
+    {
+      "name": "ssl",
+      "description": "SSL/TLS Configuration Scanner",
+      "category": "Config",
+      "exploitable": false,
+      "file": "modules\\ssl.py"
+    },
+    {
+      "name": "ssrf",
+      "description": "Server-Side Request Forgery Scanner",
+      "category": "Server-Side",
+      "exploitable": true,
+      "file": "modules\\ssrf.py"
+    },
+    {
+      "name": "ssti",
+      "description": "Server-Side Template Injection Scanner with Auto RCE",
+      "category": "Server-Side",
+      "exploitable": true,
+      "file": "modules\\ssti.py"
+    },
+    {
+      "name": "subdomain",
+      "description": "High-Speed Subdomain Enumeration and Takeover Detection",
+      "category": "Recon",
+      "exploitable": false,
+      "file": "modules\\subdomain.py"
+    },
+    {
+      "name": "takeover",
+      "description": "Subdomain Takeover Scanner",
+      "category": "Recon",
+      "exploitable": true,
+      "file": "modules\\takeover.py"
+    },
+    {
+      "name": "techdetect",
+      "description": "Technology Stack Detection and Module Recommendation",
+      "category": "Recon",
+      "exploitable": false,
+      "file": "modules\\techdetect.py"
+    },
+    {
+      "name": "upload",
+      "description": "File Upload Vulnerability Scanner",
+      "category": "Config",
+      "exploitable": true,
+      "file": "modules\\upload.py"
+    },
+    {
+      "name": "waf",
+      "description": "WAF Detection & Fingerprinting",
+      "category": "Recon",
+      "exploitable": false,
+      "file": "modules\\waf.py"
+    },
+    {
+      "name": "websocket",
+      "description": "WebSocket Security Scanner",
+      "category": "API",
+      "exploitable": true,
+      "file": "modules\\websocket.py"
+    },
+    {
+      "name": "xss",
+      "description": "Cross-Site Scripting Scanner",
+      "category": "Injection",
+      "exploitable": true,
+      "file": "modules\\xss.py"
+    },
+    {
+      "name": "xxe",
+      "description": "XML External Entity Injection Scanner",
+      "category": "Injection",
+      "exploitable": true,
+      "file": "modules\\xxe.py"
+    }
+  ]
+}

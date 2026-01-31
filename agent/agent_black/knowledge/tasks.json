@@ -1,0 +1,24 @@
+{
+  "tasks": [
+    {
+      "id": "verify_model",
+      "priority": "high",
+      "description": "Verify a local model is installed and selectable."
+    },
+    {
+      "id": "verify_lantern",
+      "priority": "high",
+      "description": "Confirm LANTERN is installed and available in PATH."
+    },
+    {
+      "id": "refresh_knowledge",
+      "priority": "medium",
+      "description": "Rebuild the knowledge pack if LANTERN has changed."
+    },
+    {
+      "id": "prompt_ready",
+      "priority": "low",
+      "description": "Request user prompt or target scope when idle."
+    }
+  ]
+}

@@ -47,7 +47,9 @@ Every flag LANTERN supports, organized by function.
 | Flag | Description | Example |
 |------|-------------|---------|
 | `-o, --output` | Report filename (no extension) | `-o scan_report` |
-| `--format` | Report format | `--format html` / `json` / `md` / `jira` / `all` |
+| `--format` | Report format | `--format html` / `json` / `md` / `jira` / `obsidian` / `all` |
+| `--obsidian` | Also export to Obsidian vault | `--obsidian` |
+| `--obsidian-vault` | Path to Obsidian vault | `--obsidian-vault ~/vault` |
 | `--generate-pocs` | Create PoC files (curl, Python, JS) | `--generate-pocs` |
 | `--sarif` | SARIF output for GitHub/GitLab | `--sarif results.sarif` |
 | `--junit` | JUnit XML for CI pipelines | `--junit results.xml` |
@@ -62,6 +64,7 @@ Every flag LANTERN supports, organized by function.
 ```bash
 lantern -t https://target.com -o report --format html
 lantern -t https://target.com -o report --format all --generate-pocs
+lantern -t https://target.com -o report --obsidian
 lantern -t https://target.com --sarif results.sarif --junit results.xml
 ```
 

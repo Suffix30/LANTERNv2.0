@@ -1,0 +1,615 @@
+{
+  "flags": [
+    {
+      "flags": [
+        "-t",
+        "--target"
+      ],
+      "dest": null,
+      "help": "Target URL or file containing URLs",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "-m",
+        "--modules"
+      ],
+      "dest": null,
+      "help": "Comma-separated modules (default: all)",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "-o",
+        "--output"
+      ],
+      "dest": null,
+      "help": "Output report filename (without extension)",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--format"
+      ],
+      "dest": null,
+      "help": "Report format",
+      "default": "html",
+      "action": null,
+      "choices": [
+        "html",
+        "json",
+        "md",
+        "jira",
+        "all"
+      ],
+      "type": null
+    },
+    {
+      "flags": [
+        "-H",
+        "--header"
+      ],
+      "dest": null,
+      "help": "Custom header (can be used multiple times)",
+      "default": null,
+      "action": "append",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "-c",
+        "--cookies"
+      ],
+      "dest": null,
+      "help": "Cookies string",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--threads"
+      ],
+      "dest": null,
+      "help": "Concurrent requests (default: 50)",
+      "default": 50,
+      "action": null,
+      "choices": null,
+      "type": "int"
+    },
+    {
+      "flags": [
+        "--timeout"
+      ],
+      "dest": null,
+      "help": "Request timeout (default: 10)",
+      "default": 10,
+      "action": null,
+      "choices": null,
+      "type": "int"
+    },
+    {
+      "flags": [
+        "--crawl"
+      ],
+      "dest": null,
+      "help": "Crawl target to discover URLs",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--crawl-depth"
+      ],
+      "dest": null,
+      "help": "Crawl depth (default: 3)",
+      "default": 3,
+      "action": null,
+      "choices": null,
+      "type": "int"
+    },
+    {
+      "flags": [
+        "--aggressive"
+      ],
+      "dest": null,
+      "help": "Aggressive mode (more payloads, WAF bypass)",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--stealth"
+      ],
+      "dest": null,
+      "help": "Stealth mode (slower, randomized)",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--fast"
+      ],
+      "dest": null,
+      "help": "Fast mode (quick checks only)",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--deep"
+      ],
+      "dest": null,
+      "help": "Deep mode (thorough injection testing)",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--preset"
+      ],
+      "dest": null,
+      "help": "Use preset profile (fast, thorough, api, stealth, exploit)",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": "str"
+    },
+    {
+      "flags": [
+        "--list-presets"
+      ],
+      "dest": null,
+      "help": "List available presets",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--chain"
+      ],
+      "dest": null,
+      "help": "Attack chain mode",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--exploit"
+      ],
+      "dest": null,
+      "help": "Enable auto-exploitation (extract data, dump creds)",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--proxy"
+      ],
+      "dest": null,
+      "help": "Proxy URL (e.g., http://127.0.0.1:8080)",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--callback-host"
+      ],
+      "dest": null,
+      "help": "Callback server host for OOB detection",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--list"
+      ],
+      "dest": null,
+      "help": "List available modules",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--list-chains"
+      ],
+      "dest": null,
+      "help": "List attack chain presets",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--resume"
+      ],
+      "dest": null,
+      "help": "Resume from last checkpoint",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--collab-server"
+      ],
+      "dest": null,
+      "help": "Start collab server (e.g., 0.0.0.0:8080)",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": "str"
+    },
+    {
+      "flags": [
+        "--collab-client"
+      ],
+      "dest": null,
+      "help": "Connect to collab server (e.g., ws://team.local:8080)",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": "str"
+    },
+    {
+      "flags": [
+        "--no-banner"
+      ],
+      "dest": null,
+      "help": "Hide banner",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--smart"
+      ],
+      "dest": null,
+      "help": "Smart module selection based on tech detection",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--tech-detect"
+      ],
+      "dest": null,
+      "help": "Run technology detection only",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--dns-brute"
+      ],
+      "dest": null,
+      "help": "High-speed DNS subdomain brute force",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--dns-wordlist"
+      ],
+      "dest": null,
+      "help": "Custom wordlist for DNS brute force",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": "str"
+    },
+    {
+      "flags": [
+        "--dns-concurrency"
+      ],
+      "dest": null,
+      "help": "DNS brute force concurrency (default: 500)",
+      "default": 500,
+      "action": null,
+      "choices": null,
+      "type": "int"
+    },
+    {
+      "flags": [
+        "-v",
+        "--verbose"
+      ],
+      "dest": null,
+      "help": "Verbose output",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--ci"
+      ],
+      "dest": null,
+      "help": "CI/CD mode with exit codes",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--fail-on"
+      ],
+      "dest": null,
+      "help": "Fail on severity (default: HIGH)",
+      "default": "HIGH",
+      "action": null,
+      "choices": [
+        "CRITICAL",
+        "HIGH",
+        "MEDIUM",
+        "LOW"
+      ],
+      "type": null
+    },
+    {
+      "flags": [
+        "--sarif"
+      ],
+      "dest": null,
+      "help": "Output SARIF report for GitHub/GitLab",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": "str"
+    },
+    {
+      "flags": [
+        "--junit"
+      ],
+      "dest": null,
+      "help": "Output JUnit XML for CI pipelines",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": "str"
+    },
+    {
+      "flags": [
+        "--scope-file"
+      ],
+      "dest": null,
+      "help": "Scope configuration file",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": "str"
+    },
+    {
+      "flags": [
+        "--include-domain"
+      ],
+      "dest": null,
+      "help": "Include domain in scope",
+      "default": null,
+      "action": "append",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--exclude-domain"
+      ],
+      "dest": null,
+      "help": "Exclude domain from scope",
+      "default": null,
+      "action": "append",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--exclude-pattern"
+      ],
+      "dest": null,
+      "help": "Exclude URL pattern (regex)",
+      "default": null,
+      "action": "append",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--cache"
+      ],
+      "dest": null,
+      "help": "Enable response caching",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--cache-ttl"
+      ],
+      "dest": null,
+      "help": "Cache TTL in seconds (default: 300)",
+      "default": 300,
+      "action": null,
+      "choices": null,
+      "type": "int"
+    },
+    {
+      "flags": [
+        "--auth-config"
+      ],
+      "dest": null,
+      "help": "Authentication configuration YAML file",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": "str"
+    },
+    {
+      "flags": [
+        "--workflow"
+      ],
+      "dest": null,
+      "help": "Run business logic workflow YAML file",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": "str"
+    },
+    {
+      "flags": [
+        "--workflow-attack"
+      ],
+      "dest": null,
+      "help": "Run specific attack from workflow",
+      "default": null,
+      "action": null,
+      "choices": null,
+      "type": "str"
+    },
+    {
+      "flags": [
+        "--oob-server"
+      ],
+      "dest": null,
+      "help": "Start built-in OOB callback server",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--oob-port"
+      ],
+      "dest": null,
+      "help": "OOB HTTP server port (default: 8888)",
+      "default": 8888,
+      "action": null,
+      "choices": null,
+      "type": "int"
+    },
+    {
+      "flags": [
+        "--oob-dns-port"
+      ],
+      "dest": null,
+      "help": "OOB DNS server port (default: 5353)",
+      "default": 5353,
+      "action": null,
+      "choices": null,
+      "type": "int"
+    },
+    {
+      "flags": [
+        "--analyze-js"
+      ],
+      "dest": null,
+      "help": "Deep JavaScript analysis (endpoints, secrets, DOM sinks)",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--cve-scan"
+      ],
+      "dest": null,
+      "help": "Scan for known CVEs based on detected technologies",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--generate-pocs"
+      ],
+      "dest": null,
+      "help": "Generate PoC files for each finding",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--fuzz-params"
+      ],
+      "dest": null,
+      "help": "Intelligent parameter fuzzing with boundary values",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--diff-baseline"
+      ],
+      "dest": null,
+      "help": "Establish response baselines for anomaly detection",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    },
+    {
+      "flags": [
+        "--list-workflows"
+      ],
+      "dest": null,
+      "help": "List available attack workflows",
+      "default": null,
+      "action": "store_true",
+      "choices": null,
+      "type": null
+    }
+  ]
+}

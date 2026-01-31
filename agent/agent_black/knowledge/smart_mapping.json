@@ -1,0 +1,18 @@
+{
+  "module_mapping": {
+    "sqli": "sqli",
+    "xss": "xss",
+    "lfi": "lfi",
+    "ssrf": "ssrf",
+    "ssti": "ssti",
+    "cmdi": "cmdi",
+    "xxe": "xxe",
+    "upload": "upload",
+    "deserial": "deserial",
+    "prototype": "prototype",
+    "graphql": "graphql",
+    "api": "apiver",
+    "idor": "idor",
+    "auth": "auth"
+  }
+}

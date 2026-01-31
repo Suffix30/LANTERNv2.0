@@ -1,0 +1,121 @@
+{
+  "chains": {
+    "auth_bypass": [
+      "waf",
+      "sqli",
+      "ldap",
+      "auth",
+      "jwt",
+      "oauth",
+      "mfa",
+      "session"
+    ],
+    "data_theft": [
+      "waf",
+      "sqli",
+      "ssrf",
+      "lfi",
+      "xxe",
+      "idor",
+      "disclosure",
+      "dirbust",
+      "cloud"
+    ],
+    "rce": [
+      "waf",
+      "cmdi",
+      "ssti",
+      "deserial",
+      "upload",
+      "ssrf"
+    ],
+    "xss_chain": [
+      "waf",
+      "csp",
+      "xss",
+      "dom",
+      "prototype",
+      "cors",
+      "csrf"
+    ],
+    "api_attack": [
+      "waf",
+      "api",
+      "graphql",
+      "massassign",
+      "jwt",
+      "idor"
+    ],
+    "enum": [
+      "waf",
+      "dirbust",
+      "subdomain",
+      "takeover",
+      "disclosure",
+      "fingerprint",
+      "techdetect",
+      "dork",
+      "cloud"
+    ],
+    "cloud": [
+      "cloud",
+      "ssrf",
+      "disclosure",
+      "dirbust"
+    ],
+    "takeover": [
+      "takeover",
+      "subdomain"
+    ],
+    "full_recon": [
+      "waf",
+      "techdetect",
+      "fingerprint",
+      "subdomain",
+      "takeover",
+      "cloud",
+      "dirbust",
+      "disclosure",
+      "dork",
+      "paramfind",
+      "csp"
+    ],
+    "injection": [
+      "waf",
+      "paramfind",
+      "sqli",
+      "xss",
+      "ssti",
+      "cmdi",
+      "lfi",
+      "xxe",
+      "crlf"
+    ],
+    "smuggle": [
+      "waf",
+      "h2smuggle",
+      "smuggle",
+      "cachepois"
+    ],
+    "cache": [
+      "cachepois",
+      "headers",
+      "cors"
+    ],
+    "poisoning": [
+      "hostinject",
+      "emailinject",
+      "crlf",
+      "cachepois",
+      "redirect",
+      "cache"
+    ],
+    "business_logic": [
+      "logic",
+      "payment",
+      "race",
+      "account",
+      "massassign"
+    ]
+  }
+}

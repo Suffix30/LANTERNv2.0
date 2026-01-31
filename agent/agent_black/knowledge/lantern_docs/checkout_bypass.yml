@@ -1,0 +1,110 @@
+name: checkout_bypass
+description: Test e-commerce checkout flow for business logic vulnerabilities
+
+variables:
+  item_id: "1"
+  quantity: "1"
+
+steps:
+  - name: add_to_cart
+    request:
+      method: POST
+      url: /api/cart/add
+      json:
+        item_id: "${item_id}"
+        quantity: "${quantity}"
+    extract:
+      cart_id: $.cart_id
+      item_price: $.price
+      item_name: $.name
+    expect:
+      status: [200, 201]
+
+  - name: view_cart
+    request:
+      method: GET
+      url: /api/cart/${cart_id}
+    extract:
+      subtotal: $.subtotal
+      items_count: $.items.length
+    expect:
+      status: 200
+
+  - name: apply_coupon
+    request:
+      method: POST
+      url: /api/cart/coupon
+      json:
+        cart_id: "${cart_id}"
+        code: "TESTCOUPON"
+    extract:
+      discount: $.discount
+      new_total: $.total
+    optional: true
+
+  - name: checkout
+    request:
+      method: POST
+      url: /api/checkout
+      json:
+        cart_id: "${cart_id}"
+    extract:
+      order_id: $.order_id
+      total: $.total
+    expect:
+      status: 200
+
+  - name: payment
+    request:
+      method: POST
+      url: /api/payment
+      json:
+        order_id: "${order_id}"
+        amount: "${total}"
+        card_token: "tok_test"
+    expect:
+      status: 200
+      body_contains: "success"
+
+attacks:
+  - name: skip_payment
+    description: Complete order without payment step
+    type: payment_bypass
+    skip_steps: [payment]
+    verify:
+      - request:
+          method: GET
+          url: /api/orders/${order_id}
+        expect:
+          body_not_contains: "paid"
+
+  - name: zero_price
+    description: Manipulate checkout total to zero
+    type: price_manipulation
+    modify_step: checkout
+    modifications:
+      json.total: "0"
+      json.amount: "0.00"
+
+  - name: negative_quantity
+    description: Add negative quantity for refund credit
+    type: quantity_manipulation
+    modify_step: add_to_cart
+    modifications:
+      json.quantity: "-1"
+
+  - name: coupon_stack
+    description: Apply coupon multiple times
+    type: coupon_abuse
+    sequence:
+      - run: [add_to_cart]
+      - run: [apply_coupon]
+      - run: [apply_coupon]
+      - run: [apply_coupon]
+      - extract: {total_after: total}
+
+  - name: race_checkout
+    description: Race condition on checkout (parallel requests)
+    type: race_condition
+    modify_step: checkout
+    modifications: {}

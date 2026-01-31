@@ -83,7 +83,9 @@ def parse_args():
     parser.add_argument("-t", "--target", help="Target URL or file containing URLs")
     parser.add_argument("-m", "--modules", help="Comma-separated modules (default: all)")
     parser.add_argument("-o", "--output", help="Output report filename (without extension)")
-    parser.add_argument("--format", choices=["html", "json", "md", "jira", "all"], default="html", help="Report format")
+    parser.add_argument("--format", choices=["html", "json", "md", "jira", "obsidian", "all"], default="html", help="Report format")
+    parser.add_argument("--obsidian", action="store_true", help="Also export to Obsidian vault (in addition to --format)")
+    parser.add_argument("--obsidian-vault", type=str, help="Path to Obsidian vault (or set BLACK_OBSIDIAN_VAULT env var)")
     parser.add_argument("-H", "--header", action="append", help="Custom header (can be used multiple times)")
     parser.add_argument("-c", "--cookies", help="Cookies string")
     parser.add_argument("--threads", type=int, default=50, help="Concurrent requests (default: 50)")
@@ -833,6 +835,13 @@ async def main():
             if report_format in ["jira", "all"]:
                 jira_path = await reporter.save_jira_csv(f"{args.output}_jira.csv")
                 saved.append(jira_path)
+            
+            if report_format in ["obsidian", "all"] or getattr(args, 'obsidian', False):
+                import os
+                vault_path = getattr(args, 'obsidian_vault', None) or os.environ.get("BLACK_OBSIDIAN_VAULT")
+                obsidian_result = await reporter.save_obsidian(vault_path)
+                saved.append(obsidian_result["main_report"])
+                console.print(f"[bold purple]Obsidian:[/] {obsidian_result['directory']} ({len(obsidian_result['findings'])} findings)")
             
             console.print(f"\n[bold green]Reports saved:[/] {', '.join(saved)}")
     

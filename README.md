@@ -50,6 +50,44 @@ Web vulnerability scanner with automatic exploitation. 62 modules, async archite
 - **Scope management** - Include/exclude domains, IPs, regex patterns, file-based config
 - **Response caching** - LRU cache with TTL, persistence, improves scan speed
 
+## Agent BLACK - AI Security Companion
+
+LANTERN includes **Agent BLACK**, an AI-powered security assistant.
+
+### Features
+
+- **Natural language commands** - "Scan this site for SQL injection" → runs the right modules
+- **Overwatch Mode** - Monitors all terminals, browser tabs, and files for situational awareness
+- **Watch Mode** - Continuous monitoring with proactive alerts (flags, shells, errors)
+- **Obsidian Integration** - Full vault for writeups, targets, methodology, payloads
+- **Autonomous scanning** - Plan and execute multi-stage attacks with AI guidance
+- **Knowledge-augmented** - 21 knowledge docs covering LANTERN, payloads, attack strategies
+- **Remote tool execution** - Run hashcat, HackRF, WiFi attacks on a remote Kali host
+
+### Quick Start
+
+```bash
+pip install -e .
+
+black chat                    # Interactive chat
+black overwatch --snapshot    # Analyze current situation
+black overwatch --watch       # Continuous monitoring with alerts
+black autonomous <target>     # Autonomous scanning
+black obsidian init ~/Docs    # Create Obsidian security vault
+black status                  # Check agent status
+```
+
+### Overwatch Alerts
+
+Watch mode detects and alerts on:
+- Flags (`flag{`, `ctf{`, `htb{`)
+- Sessions/shells opened
+- SQL injection confirmations
+- Privilege escalation
+- Errors and failures
+
+**[→ Full Agent BLACK Documentation](agent/docs/SETUP.md)**
+
 ## Install
 
 ### pipx (recommended)
@@ -269,6 +307,8 @@ List presets: `lantern --list-presets`
 lantern -t https://target.com -o report                  # HTML
 lantern -t https://target.com -o report --format json    # JSON
 lantern -t https://target.com -o report --format all     # All formats
+lantern -t https://target.com -o report --obsidian       # Also export to Obsidian
+lantern -t https://target.com -o report --format obsidian --obsidian-vault ~/vault  # Obsidian only
 ```
 
 Reports include:
@@ -277,13 +317,33 @@ Reports include:
 - Remediation steps with code examples
 - Exploitation data (extracted creds, files, shell URLs)
 
+### Obsidian Integration (Beta)
+
+> **Note:** Obsidian integration is under active development. Core functionality works but some features may change.
+
+Export scan results directly to your Obsidian security vault:
+
+```bash
+lantern -t https://target.com -o report --obsidian
+lantern -t https://target.com -o report --obsidian-vault ~/Documents/Security\ Vault
+export BLACK_OBSIDIAN_VAULT="~/Documents/Security Vault"
+```
+
+Creates:
+- Main scan report with frontmatter and backlinks
+- Individual finding notes linked to the main report
+- Proper tags for filtering (severity, module, target)
+- Links to methodology notes
+
 ## Options
 
 ```
 -t, --target        Target URL or file with URLs
 -m, --modules       Comma-separated module list
 -o, --output        Output filename (no extension)
---format            html, json, md, jira, all
+--format            html, json, md, jira, obsidian, all
+--obsidian          Also export to Obsidian vault
+--obsidian-vault    Path to Obsidian vault
 --threads           Concurrent requests (default: 50)
 --timeout           Request timeout seconds (default: 10)
 --crawl             Enable crawler

