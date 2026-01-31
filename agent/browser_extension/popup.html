@@ -60,35 +60,6 @@
   <button id="copy" style="background: #444; color: #fff;">Copy Tab URLs</button>
   <div class="note">Overwatch reads saved data automatically</div>
 
-  <script>
-    async function updateTabCount() {
-      const tabsInfo = document.getElementById('tabs-info');
-      try {
-        const tabs = await chrome.tabs.query({});
-        tabsInfo.textContent = `Tracking ${tabs.length} open tabs`;
-      } catch (e) {
-        tabsInfo.textContent = 'Unable to access tabs';
-      }
-    }
-    
-    document.getElementById('sync').addEventListener('click', async () => {
-      const tabs = await chrome.tabs.query({});
-      const state = {
-        timestamp: new Date().toISOString(),
-        tabs: tabs.map(t => ({ url: t.url, title: t.title, active: t.active })),
-      };
-      chrome.storage.local.set({ browserState: state });
-      document.getElementById('status').textContent = `Saved ${tabs.length} tabs at ${new Date().toLocaleTimeString()}`;
-    });
-    
-    document.getElementById('copy').addEventListener('click', async () => {
-      const tabs = await chrome.tabs.query({});
-      const urls = tabs.map(t => t.url).join('\n');
-      navigator.clipboard.writeText(urls);
-      document.getElementById('status').textContent = `Copied ${tabs.length} URLs to clipboard`;
-    });
-    
-    updateTabCount();
-  </script>
+  <script src="popup.js"></script>
 </body>
 </html>
