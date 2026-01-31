@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
   <style>
     body {
       width: 300px;
@@ -21,10 +22,12 @@
       margin-bottom: 10px;
     }
     .status.connected { border-left: 3px solid #00ff88; }
-    .status.disconnected { border-left: 3px solid #ff4444; }
+    .status.disconnected { border-left: 3px solid #ff6600; }
+    .status.offline { border-left: 3px solid #888; }
     .tabs-info {
       font-size: 12px;
       color: #888;
+      margin-bottom: 10px;
     }
     button {
       width: 100%;
@@ -35,39 +38,36 @@
       border-radius: 5px;
       cursor: pointer;
       font-weight: bold;
+      margin-bottom: 8px;
     }
     button:hover {
       background: #00cc6a;
     }
+    .note {
+      font-size: 11px;
+      color: #666;
+      margin-top: 10px;
+    }
   </style>
 </head>
 <body>
-  <h1>🔍 Agent BLACK</h1>
-  <div id="status" class="status">
-    Checking connection...
+  <h1>Agent BLACK</h1>
+  <div id="status" class="status offline">
+    Standalone Mode (data saved locally)
   </div>
-  <div class="tabs-info" id="tabs-info"></div>
-  <button id="sync">Sync Now</button>
+  <div class="tabs-info" id="tabs-info">Loading...</div>
+  <button id="sync">Save Browser State</button>
+  <button id="copy" style="background: #444; color: #fff;">Copy Tab URLs</button>
+  <div class="note">Overwatch reads saved data automatically</div>
 
   <script>
-    async function checkStatus() {
-      const statusDiv = document.getElementById('status');
+    async function updateTabCount() {
       const tabsInfo = document.getElementById('tabs-info');
-      
       try {
         const tabs = await chrome.tabs.query({});
-        tabsInfo.textContent = `Tracking ${tabs.length} tabs`;
-        
-        const response = await fetch('http://localhost:8765/health');
-        if (response.ok) {
-          statusDiv.className = 'status connected';
-          statusDiv.textContent = '✓ Connected to Agent BLACK';
-        } else {
-          throw new Error('Not connected');
-        }
+        tabsInfo.textContent = `Tracking ${tabs.length} open tabs`;
       } catch (e) {
-        statusDiv.className = 'status disconnected';
-        statusDiv.textContent = '✗ Agent BLACK not running';
+        tabsInfo.textContent = 'Unable to access tabs';
       }
     }
     
@@ -77,21 +77,18 @@
         timestamp: new Date().toISOString(),
         tabs: tabs.map(t => ({ url: t.url, title: t.title, active: t.active })),
       };
-      
-      try {
-        await fetch('http://localhost:8765/browser_state', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(state),
-        });
-        alert('Synced!');
-      } catch (e) {
-        chrome.storage.local.set({ browserState: state });
-        alert('Saved locally (agent not running)');
-      }
+      chrome.storage.local.set({ browserState: state });
+      document.getElementById('status').textContent = `Saved ${tabs.length} tabs at ${new Date().toLocaleTimeString()}`;
     });
     
-    checkStatus();
+    document.getElementById('copy').addEventListener('click', async () => {
+      const tabs = await chrome.tabs.query({});
+      const urls = tabs.map(t => t.url).join('\n');
+      navigator.clipboard.writeText(urls);
+      document.getElementById('status').textContent = `Copied ${tabs.length} URLs to clipboard`;
+    });
+    
+    updateTabCount();
   </script>
 </body>
 </html>
