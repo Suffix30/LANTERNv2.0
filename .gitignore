@@ -70,3 +70,11 @@ DEV_TODO.md
 # Internal dev notes
 agent/docs/Agent-BLACK-Project-State.md
 agent/docs/Agent-BLACK-Roadmap.md
+agent/labs/engagements.json
+
+# Adaptive system artifacts (user-specific)
+agent/agent_black/adaptive_state/
+agent/agent_black/gap_analysis/
+agent/agent_black/transfer_results/
+agent/agent_black/visualizations/
+agent/agent_black/sandbox/

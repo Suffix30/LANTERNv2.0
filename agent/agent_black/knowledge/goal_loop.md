@@ -98,17 +98,17 @@ For any engagement, follow this order unless operator specifies otherwise:
 ### "Should I exploit this vulnerability?"
 
 ```
-Is this an authorized target?
-├── NO → Stop. Ask operator for confirmation.
-└── YES → Continue
+Is this a target NET gave me?
+├── YES → Attack it
+└── NO → Ask NET if I should add it to scope
          │
-         Is exploitation in scope?
-         ├── NO → Document finding, move on
-         └── YES → Continue
+         Can I exploit this?
+         ├── YES → Execute exploit
+         └── NO → Find another vector
                   │
-                  Is it a known stable exploit?
-                  ├── YES → Execute with standard precautions
-                  └── NO → Warn operator, proceed carefully
+                  Is it a stable exploit?
+                  ├── YES → Execute directly
+                  └── NO → Test carefully, maintain access options
 ```
 
 ### "I'm stuck - what now?"

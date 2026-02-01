@@ -114,7 +114,16 @@ class CorsModule(BaseModule):
                     severity,
                     "CORS: Arbitrary origin reflected",
                     url=target,
-                    evidence=f"Reflects {evil} (credentials: {acac}) [class: {cls}]"
+                    evidence=f"Reflects {evil} (credentials: {acac}) [class: {cls}]",
+                    request_data={"method": "GET", "url": target, "headers": {"Origin": evil}},
+                    response_data={"status": resp.get("status"), "headers": resp.get("headers", {})},
+                    technique="CORS misconfiguration testing",
+                    payload=f"Origin: {evil}",
+                    injection_point="Origin header",
+                    http_method="GET",
+                    status_code=resp.get("status"),
+                    detection_method="Origin reflection check",
+                    matched_pattern=f"ACAO: {acao}, ACAC: {acac}",
                 )
                 return
     

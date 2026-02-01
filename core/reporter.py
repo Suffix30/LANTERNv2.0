@@ -60,6 +60,11 @@ class Reporter:
             "fix": "Encode all user output. Use Content-Security-Policy headers. Validate input.",
             "code": "html.escape(user_input)  # Python\nDOMPurify.sanitize(input)  // JavaScript",
         },
+        "xss_dom": {
+            "title": "DOM-based Cross-Site Scripting",
+            "fix": "1) Avoid dangerous sinks: innerHTML, document.write, eval, location assignment. 2) Use safe APIs: textContent, setAttribute (for non-event attrs). 3) Sanitize with DOMPurify before DOM insertion. 4) Use framework's built-in XSS protection (Angular's sanitizer, React's JSX escaping). 5) Implement strict CSP with 'unsafe-inline' blocked.",
+            "code": "// UNSAFE: element.innerHTML = userInput;\n// SAFE: element.textContent = userInput;\n// SAFE: element.innerHTML = DOMPurify.sanitize(userInput);\n// For URLs: if (!url.startsWith('https://')) return;",
+        },
         "ssrf": {
             "title": "Server-Side Request Forgery",
             "fix": "Whitelist allowed domains. Block internal IP ranges. Validate URL schemes.",
@@ -239,6 +244,12 @@ class Reporter:
     
     def _get_remediation(self, finding):
         module = finding.get("module", "").lower()
+        description = finding.get("description", "").lower()
+        technique = finding.get("technique", "").lower()
+        
+        if module == "xss" and ("dom" in description or "dom" in technique):
+            return self.remediation.get("xss_dom", self.remediation.get("xss"))
+        
         return self.remediation.get(module, {
             "title": finding.get("module", "Unknown"),
             "fix": "Review the vulnerability and implement appropriate security controls.",
@@ -631,13 +642,70 @@ class Reporter:
                 """
             
             poc_html = ""
-            if r.get('poc_data'):
+            import html as html_escape
+            
+            if r.get('requires_browser') or r.get('dom_sink_type'):
+                test_url = html_escape.escape(r.get('test_url', r.get('url', '')))
+                sink_type = r.get('dom_sink_type', 'DOM sink')
+                injection_point = r.get('injection_point', 'JavaScript code')
+                payload = html_escape.escape(str(r.get('payload', '<script>alert(1)</script>')))
+                frameworks = r.get('detected_frameworks', [])
+                framework_protected = r.get('framework_protected', False)
+                
+                framework_warning = ""
+                if framework_protected and frameworks:
+                    fw_list = ', '.join(frameworks) if isinstance(frameworks, list) else str(frameworks)
+                    framework_warning = f"""<div style="background: #2a2a0a; border: 1px solid #5a5a1a; border-radius: 4px; padding: 10px; margin-bottom: 15px;">
+                        <strong style="color: #ffc107;">⚠️ Framework Protection Detected:</strong> {html_escape.escape(fw_list)}<br>
+                        <span style="color: #aaa;">Modern frameworks (Angular, React, Vue) automatically sanitize DOM operations. 
+                        This finding may be a <strong>false positive</strong>. Manual testing showed no alert - framework likely blocks the payload.</span>
+                    </div>"""
+                
+                browser_steps = f"""<ol>
+                    <li>Open browser Developer Tools (F12)</li>
+                    <li>Navigate to: <code>{html_escape.escape(r.get('url', ''))}</code></li>
+                    <li>In the Console, observe the identified sink: <code>{html_escape.escape(sink_type)}</code></li>
+                    <li>Test with payload URL: <code style="color: #ff6666;">{test_url}</code></li>
+                    <li>If an alert box appears or sink executes, the vulnerability is confirmed</li>
+                    <li><strong>If no alert appears, the framework may be sanitizing the input (false positive)</strong></li>
+                </ol>"""
+                
+                browser_js = f"""// Browser Console Test
+// 1. Open DevTools Console on the target page
+// 2. Look for the sink: {sink_type}
+// 3. Test by navigating to:
+//    {r.get('test_url', '')}
+
+// Or inject via Console:
+location.hash = '<img src=x onerror=alert(document.domain)>';
+// Or for query param sinks:
+// location.search = '?q=<script>alert(1)</script>';"""
+                
+                poc_html = f"""
+                    <div class="poc-section" style="background: #0d0d1a; border: 1px solid #1a1a3e; border-radius: 8px; padding: 20px; margin-top: 15px;">
+                        <h4 style="color: #ff6b6b; margin-bottom: 15px;">🔴 Proof of Concept (Browser-Based)</h4>
+                        {framework_warning}
+                        <p style="color: #ffc107; margin-bottom: 15px;">⚠️ DOM-based XSS requires browser testing - curl/HTTP requests won't trigger the vulnerability</p>
+                        <div style="margin-bottom: 15px;">
+                            <h5 style="color: #00d4ff; margin-bottom: 10px;">Reproduction Steps</h5>
+                            {browser_steps}
+                        </div>
+                        <div style="margin-bottom: 15px;">
+                            <h5 style="color: #00d4ff; margin-bottom: 10px;">Test URL</h5>
+                            <pre style="background: #0a0a0f; padding: 15px; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; word-break: break-all;"><code style="color: #ff6666;">{test_url}</code></pre>
+                        </div>
+                        <details style="margin-top: 15px;">
+                            <summary style="cursor: pointer; color: #00d4ff;">Browser Console PoC (click to expand)</summary>
+                            <pre style="background: #0a0a0f; padding: 15px; border-radius: 4px; overflow-x: auto; margin-top: 10px;"><code>{html_escape.escape(browser_js)}</code></pre>
+                        </details>
+                    </div>
+                """
+            elif r.get('poc_data'):
                 poc = r['poc_data']
                 steps_html = ""
                 if poc.get('reproduction_steps'):
                     steps_html = "<ol>" + "".join(f"<li>{step}</li>" for step in poc['reproduction_steps']) + "</ol>"
                 
-                import html as html_escape
                 curl_escaped = html_escape.escape(poc.get('curl_command', ''))
                 python_escaped = html_escape.escape(poc.get('python_code', '')[:500])
                 
@@ -656,6 +724,32 @@ class Reporter:
                             <summary style="cursor: pointer; color: #00d4ff;">Python PoC (click to expand)</summary>
                             <pre style="background: #0a0a0f; padding: 15px; border-radius: 4px; overflow-x: auto; margin-top: 10px;"><code>{python_escaped}</code></pre>
                         </details>
+                    </div>
+                """
+            elif r.get('secret_type') or r.get('grep_command'):
+                secret_url = html_escape.escape(r.get('url', ''))
+                grep_cmd = html_escape.escape(r.get('grep_command', ''))
+                pattern = html_escape.escape(r.get('matched_pattern', ''))
+                secret_type = r.get('secret_type', 'secret')
+                
+                secret_steps = f"""<ol>
+                    <li>Fetch the page: <code>curl '{secret_url}' -o response.html</code></li>
+                    <li>Search for the pattern: <code>{grep_cmd if grep_cmd else f"grep -E '{pattern}' response.html"}</code></li>
+                    <li>Review matches for actual {secret_type} exposure</li>
+                    <li>Check if the secret is valid/active (test API keys, try credentials)</li>
+                </ol>"""
+                
+                poc_html = f"""
+                    <div class="poc-section" style="background: #0d0d1a; border: 1px solid #1a1a3e; border-radius: 8px; padding: 20px; margin-top: 15px;">
+                        <h4 style="color: #ff6b6b; margin-bottom: 15px;">🔴 Proof of Concept</h4>
+                        <div style="margin-bottom: 15px;">
+                            <h5 style="color: #00d4ff; margin-bottom: 10px;">Reproduction Steps</h5>
+                            {secret_steps}
+                        </div>
+                        <div style="margin-bottom: 15px;">
+                            <h5 style="color: #00d4ff; margin-bottom: 10px;">Detection Command</h5>
+                            <pre style="background: #0a0a0f; padding: 15px; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; word-break: break-all;"><code>curl '{secret_url}' | grep -oE '{pattern}'</code></pre>
+                        </div>
                     </div>
                 """
             

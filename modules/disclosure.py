@@ -177,7 +177,14 @@ class DisclosureModule(BaseModule):
                             evidence=evidence,
                             confidence_evidence=confidence_evidence,
                             request_data={"method": "GET", "url": url},
-                            response_data={"status": status, "text": resp.get("text", "")[:1500], "headers": resp.get("headers", {})}
+                            response_data={"status": status, "text": resp.get("text", "")[:1500], "headers": resp.get("headers", {})},
+                            technique="Sensitive path enumeration",
+                            injection_point=f"Path: {path}",
+                            http_method="GET",
+                            status_code=status,
+                            content_length=len(resp.get("text", "")),
+                            detection_method="Path enumeration with content analysis",
+                            matched_pattern=f"Response code {status}, file detected",
                         )
                         
                         if parsed_data:
@@ -351,12 +358,22 @@ class DisclosureModule(BaseModule):
             resp = await self.http.get(trigger)
             if resp.get("status"):
                 for pattern, severity in error_patterns:
-                    if re.search(pattern, resp["text"], re.IGNORECASE):
+                    match = re.search(pattern, resp["text"], re.IGNORECASE)
+                    if match:
+                        error_snippet = resp["text"][max(0, match.start()-50):match.end()+100][:200]
                         self.add_finding(
                             severity,
                             "Verbose error message disclosure",
                             url=trigger,
-                            evidence=f"Error pattern detected"
+                            evidence=f"Error pattern detected: {error_snippet[:80]}...",
+                            request_data={"method": "GET", "url": trigger},
+                            response_data={"status": resp.get("status"), "text": resp.get("text", "")[:1500]},
+                            technique="Error message probing",
+                            injection_point="URL path/query",
+                            http_method="GET",
+                            status_code=resp.get("status"),
+                            detection_method="Error pattern matching",
+                            matched_pattern=pattern[:50],
                         )
                         return
     

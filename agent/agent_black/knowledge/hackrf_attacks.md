@@ -53,9 +53,10 @@ hackrf_transfer -t capture.raw -f 433920000 -s 2000000 -x 40
 2. Analyze with inspectrum
 3. Replay: `hackrf_transfer -t signal.raw -f 315000000 -s 2000000 -x 40`
 
-### GPS Spoofing (illegal!)
-- Use gps-sdr-sim to generate fake GPS
-- Requires precise timing
+### GPS Spoofing
+- Use gps-sdr-sim to generate fake GPS signals
+- Requires precise timing and calibration
+- Effective for testing GPS-dependent systems
 
 ## Analysis Tools
 - **inspectrum**: Visual signal analysis
@@ -72,8 +73,8 @@ hackrf_transfer -t capture.raw -f 433920000 -s 2000000 -x 40
 6. Decode protocol
 7. Replay or craft custom signals
 
-## Safety
-- Transmitting without license is illegal in most countries
-- Only test on YOUR OWN devices
-- Use Faraday cage for testing
-- Check local RF regulations
+## Operational Notes
+- Use Faraday cage to contain test signals
+- Low power settings reduce detection range
+- Frequency hopping can evade monitoring
+- Always capture before transmitting for replay attacks

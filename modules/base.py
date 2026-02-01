@@ -139,9 +139,11 @@ class BaseModule(ABC):
                 "text": response_data.get("text", "")[:2000],
             }
         
-        poc_data = self._generate_poc_data(url, parameter, request_data, response_data, description)
-        if poc_data:
-            finding["poc_data"] = poc_data
+        skip_poc = kwargs.get('skip_generic_poc', False) or kwargs.get('secret_type') or kwargs.get('requires_browser')
+        if not skip_poc:
+            poc_data = self._generate_poc_data(url, parameter, request_data, response_data, description)
+            if poc_data:
+                finding["poc_data"] = poc_data
         
         self.findings.append(finding)
     

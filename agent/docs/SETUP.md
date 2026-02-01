@@ -10,27 +10,23 @@ Agent BLACK is an AI-powered security assistant that works alongside LANTERN. It
 4. [Installation](#installation)
 5. [Configuration](#configuration)
 6. [Knowledge Base Setup](#knowledge-base-setup)
-7. [Running Agent BLACK](#running-agent-black)
-8. [Overwatch Mode](#overwatch-mode)
-9. [Advanced Features](#advanced-features)
-10. [Troubleshooting](#troubleshooting)
+7. [Overwatch Mode](#overwatch-mode)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Quick Start
 
 ```bash
-# From the LANTERNv2.0 root directory
-pip install -e .
+pip install "lantern-scanner[agent] @ git+https://github.com/Suffix30/LANTERNv2.0.git"
 
-# Check status
 black status
-
-# Start chatting with Agent BLACK
 black chat
 ```
 
 That's it for basic usage. Read on for full setup with AI and knowledge base.
+
+For all available commands, see the [Command Reference](../../docs/COMMANDS.md#agent-black).
 
 ---
 
@@ -109,11 +105,17 @@ When you run a command like `hackrf scan`:
 
 ## Installation
 
-### Step 1: Install Agent Dependencies
+### Step 1: Install LANTERN with Agent BLACK
 
 ```bash
-cd agent
-pip install -r requirements.txt
+pip install "lantern-scanner[agent] @ git+https://github.com/Suffix30/LANTERNv2.0.git"
+```
+
+Or from source:
+```bash
+git clone https://github.com/Suffix30/LANTERNv2.0.git
+cd LANTERNv2.0
+pip install -e ".[agent]"
 ```
 
 ### Step 2: Install Ollama (for AI features)
@@ -173,6 +175,18 @@ export BLACK_KALI_PORT=22
 # GPU Host (for hashcat)
 export BLACK_GPU_HOST=192.168.1.50
 export BLACK_GPU_USER=user
+
+# Knowledge Mode (default: true)
+export BLACK_FULL_KNOWLEDGE=true
+```
+
+### Full Knowledge Mode
+
+By default, Agent BLACK loads ALL knowledge documents into context for every LLM interaction. This ensures no objectives are overlooked due to context truncation.
+
+To disable (for faster responses with less context):
+```bash
+export BLACK_FULL_KNOWLEDGE=false
 ```
 
 ### Config File (Optional)
@@ -257,63 +271,6 @@ python rag.py
 ```
 
 This shows how many chunks are indexed and runs a test query.
-
----
-
-## Running Agent BLACK
-
-### Available Commands
-
-```bash
-black                # Interactive chat (default)
-black chat           # Interactive chat mode
-black overwatch      # Situational awareness mode
-black autonomous     # Autonomous pentesting
-black pwn            # PWN/CTF utilities
-black status         # Check agent status
-```
-
-### Interactive Chat Mode
-
-```bash
-black chat
-```
-
-This starts an interactive session where you can:
-- Ask security questions
-- Run LANTERN scans via natural language
-- Analyze results
-- Get exploit guidance
-
-### Example Commands
-
-```
-[YOU] > scan https://target.com for SQL injection
-[YOU] > what modules should I use for API testing?
-[YOU] > crack this hash: 5f4dcc3b5aa765d61d8327deb882cf99
-[YOU] > help
-[YOU] > status
-```
-
-### Programmatic Usage
-
-```python
-from agents.agent_black import AgentBlack
-import asyncio
-
-agent = AgentBlack(load_model=True)
-
-# Check status
-print(agent.get_status())
-
-# Ask a question
-response = asyncio.run(agent.think("How do I test for SSRF?"))
-print(response)
-
-# Plan a scan
-plan = asyncio.run(agent.plan_scan("Full security audit of https://target.com"))
-print(plan)
-```
 
 ---
 
@@ -404,48 +361,6 @@ Or set the environment variable to point to any directory with `.log` files.
 
 ---
 
-## Advanced Features
-
-### Remote Kali Execution
-
-Configure a remote Kali host for:
-- Password cracking with john/hashcat
-- WiFi attacks with aircrack-ng
-- HackRF/SDR operations
-
-```bash
-export BLACK_KALI_HOST=192.168.1.100
-export BLACK_KALI_USER=kali
-```
-
-Then in chat:
-```
-[YOU] > crack hashes
-[YOU] > hackrf scan 433mhz
-[YOU] > wifi scan
-```
-
-### Knowledge Queries
-
-Once your knowledge base is set up:
-```
-[YOU] > how do I bypass WAF for SQL injection?
-[YOU] > what are common SSRF payloads?
-[YOU] > explain JWT none algorithm attack
-```
-
-Agent BLACK will search your ingested books and provide answers with sources.
-
-### Attack Planning
-
-```
-[YOU] > I found an SSRF, what should I try next?
-[YOU] > plan attack chain for e-commerce site
-[YOU] > what exploitation options for LFI?
-```
-
----
-
 ## Troubleshooting
 
 ### "No LLM available - running in keyword mode"
@@ -488,15 +403,6 @@ pip install langchain langchain-community chromadb pymupdf
 
 ## Next Steps
 
+- [Command Reference](../../docs/COMMANDS.md#agent-black) - Full CLI documentation
 - [Knowledge Base Guide](KNOWLEDGE.md) - Deep dive into RAG setup
 - [Remote Attacks Guide](REMOTE.md) - WiFi, HackRF, hash cracking
-- [API Reference](API.md) - AgentBlack class documentation
-
----
-
-## Support
-
-For issues, check:
-1. Ollama is running: `curl http://localhost:11434/api/tags`
-2. Model is available: `ollama list`
-3. Dependencies installed: `pip list | grep langchain`

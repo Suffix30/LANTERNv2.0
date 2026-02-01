@@ -4,6 +4,16 @@
 
 ---
 
+## Getting Started
+
+| Guide | Description |
+|-------|-------------|
+| **[Quick Start](QUICKSTART.md)** | Get scanning in 5 minutes |
+| **[Command Reference](COMMANDS.md)** | Complete CLI documentation |
+| **[Agent BLACK Setup](../agent/docs/SETUP.md)** | AI companion setup |
+
+---
+
 ## What Makes LANTERN Different
 
 | Feature | What It Does |
@@ -127,23 +137,14 @@ lantern -t https://target.com --sarif results.sarif           # GitHub/GitLab in
 
 LANTERN includes an AI-powered security assistant that understands your workflow.
 
-> **Note:** Obsidian integration is in beta - core features work but may evolve.
-
 | Feature | Description |
 |---------|-------------|
-| **Chat Mode** | Natural language commands → LANTERN actions |
-| **Overwatch Mode** | Monitors terminals, browser, files for situational awareness |
-| **Watch Mode** | Continuous monitoring with proactive alerts |
-| **Obsidian Integration** | Full vault for writeups, targets, methodology |
+| **Chat Mode** | Natural language commands for LANTERN control |
+| **Overwatch Mode** | Monitors terminals and files for situational awareness |
+| **Autonomous Mode** | AI-planned multi-stage attacks |
+| **Knowledge Base** | RAG-powered answers from your security PDFs |
 
-```bash
-black chat                    # Interactive chat
-black overwatch --snapshot    # Analyze current situation
-black overwatch --watch       # Continuous monitoring
-black obsidian init ~/vault   # Create security vault
-```
-
-**[→ Full Agent BLACK Documentation](../agent/docs/SETUP.md)**
+**[Setup Guide](../agent/docs/SETUP.md)** | **[Command Reference](COMMANDS.md#agent-black)**
 
 ---
 

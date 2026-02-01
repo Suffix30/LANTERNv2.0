@@ -2,11 +2,261 @@ import os
 import re
 import json
 import subprocess
+import hashlib
+import math
 from pathlib import Path
-from typing import Dict, Any, Optional, List
-from dataclasses import dataclass
- 
+from typing import Dict, Any, Optional, List, Callable
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+  
 from .base import Agent
+
+
+def capability(name: str, description: str, parameters: Dict[str, Any] = None, category: str = "general"):
+    def decorator(func: Callable):
+        func._capability_info = {
+            "name": name,
+            "description": description,
+            "parameters": parameters or {},
+            "category": category,
+            "callable": func.__name__
+        }
+        return func
+    return decorator
+
+
+class CapabilityRegistry:
+    def __init__(self, agent):
+        self._agent = agent
+        self._capabilities: Dict[str, Dict[str, Any]] = {}
+        self._execution_history: List[Dict[str, Any]] = []
+        self._scan_for_capabilities()
+    
+    def _scan_for_capabilities(self):
+        for attr_name in dir(self._agent):
+            try:
+                attr = getattr(self._agent, attr_name)
+                if callable(attr) and hasattr(attr, '_capability_info'):
+                    info = attr._capability_info
+                    self._capabilities[info["name"]] = {
+                        **info,
+                        "method": attr,
+                        "call_count": 0,
+                        "last_called": None,
+                    }
+            except:
+                pass
+    
+    def _generate_execution_id(self, name: str) -> str:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+        hash_input = f"{name}:{timestamp}"
+        return hashlib.md5(hash_input.encode()).hexdigest()[:12]
+    
+    def list_all(self) -> List[Dict[str, Any]]:
+        return [
+            {k: v for k, v in cap.items() if k != "method"}
+            for cap in self._capabilities.values()
+        ]
+    
+    def get(self, name: str) -> Optional[Dict[str, Any]]:
+        return self._capabilities.get(name)
+    
+    def execute(self, name: str, **kwargs) -> Any:
+        cap = self._capabilities.get(name)
+        if not cap:
+            raise ValueError(f"Unknown capability: {name}")
+        
+        execution_id = self._generate_execution_id(name)
+        start_time = datetime.now(timezone.utc)
+        
+        result = cap["method"](**kwargs)
+        
+        end_time = datetime.now(timezone.utc)
+        duration_ms = (end_time - start_time).total_seconds() * 1000
+        
+        cap["call_count"] += 1
+        cap["last_called"] = end_time.isoformat()
+        
+        self._execution_history.append({
+            "id": execution_id,
+            "capability": name,
+            "timestamp": start_time.isoformat(),
+            "duration_ms": duration_ms,
+            "success": result is not None,
+        })
+        
+        if len(self._execution_history) > 100:
+            self._execution_history = self._execution_history[-100:]
+        
+        return result
+    
+    def by_category(self, category: str) -> List[Dict[str, Any]]:
+        return [
+            {k: v for k, v in cap.items() if k != "method"}
+            for cap in self._capabilities.values()
+            if cap.get("category") == category
+        ]
+    
+    def get_stats(self) -> Dict[str, Any]:
+        total_calls = sum(c.get("call_count", 0) for c in self._capabilities.values())
+        categories = set(c.get("category", "general") for c in self._capabilities.values())
+        
+        return {
+            "total_capabilities": len(self._capabilities),
+            "total_calls": total_calls,
+            "categories": list(categories),
+            "recent_executions": len(self._execution_history),
+        }
+    
+    def get_capability_priority(self, name: str) -> float:
+        cap = self._capabilities.get(name)
+        if not cap:
+            return 0.0
+        
+        call_count = cap.get("call_count", 0)
+        base_priority = 1.0 / (1.0 + math.exp(-0.1 * call_count))
+        return base_priority
+    
+    def to_prompt_format(self) -> str:
+        lines = ["AVAILABLE CAPABILITIES:"]
+        for cat in set(c.get("category", "general") for c in self._capabilities.values()):
+            lines.append(f"\n[{cat.upper()}]")
+            for cap in self.by_category(cat):
+                params = ", ".join(f"{k}: {v.get('type', 'any')}" for k, v in cap.get("parameters", {}).items())
+                lines.append(f"  - {cap['name']}({params})")
+                lines.append(f"    {cap['description']}")
+        return "\n".join(lines)
+
+
+class MultiProviderLLM:
+    PROVIDERS = {
+        "ollama": {"default_model": "mistral", "requires": []},
+        "local": {"default_model": "gguf", "requires": ["llama_cpp"]},
+        "anthropic": {"default_model": "claude-3-5-sonnet-20241022", "requires": ["anthropic"]},
+        "openai": {"default_model": "gpt-4o", "requires": ["openai"]},
+        "deepseek": {"default_model": "deepseek-chat", "requires": ["openai"]},
+    }
+    
+    def __init__(self, provider: str = "ollama", model: str = None, config: Dict[str, Any] = None):
+        self.provider = provider
+        self.model = model or self.PROVIDERS.get(provider, {}).get("default_model", "mistral")
+        self.config = config or {}
+        self._client = None
+        self._available = self._check_availability()
+    
+    def _check_availability(self) -> bool:
+        reqs = self.PROVIDERS.get(self.provider, {}).get("requires", [])
+        for req in reqs:
+            try:
+                __import__(req)
+            except ImportError:
+                return False
+        return True
+    
+    @property
+    def available(self) -> bool:
+        return self._available
+    
+    def generate(self, prompt: str, system: str = "", max_tokens: int = 2000, temperature: float = 0.7) -> str:
+        if self.provider == "ollama":
+            return self._ollama_generate(prompt, system, max_tokens, temperature)
+        elif self.provider == "local":
+            return self._local_generate(prompt, system, max_tokens, temperature)
+        elif self.provider == "anthropic":
+            return self._anthropic_generate(prompt, system, max_tokens, temperature)
+        elif self.provider == "openai":
+            return self._openai_generate(prompt, system, max_tokens, temperature)
+        elif self.provider == "deepseek":
+            return self._deepseek_generate(prompt, system, max_tokens, temperature)
+        return "[Error: Unknown provider]"
+    
+    def _ollama_generate(self, prompt: str, system: str, max_tokens: int, temperature: float) -> str:
+        import urllib.request
+        host = self.config.get("host", "localhost")
+        port = self.config.get("port", 11434)
+        
+        full_prompt = f"{system}\n\n{prompt}" if system else prompt
+        data = json.dumps({
+            "model": self.model,
+            "prompt": full_prompt,
+            "stream": False,
+            "options": {"temperature": temperature, "num_predict": max_tokens}
+        }).encode()
+        
+        req = urllib.request.Request(
+            f"http://{host}:{port}/api/generate",
+            data=data,
+            headers={"Content-Type": "application/json"}
+        )
+        
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result = json.loads(resp.read().decode())
+            return result.get("response", "")
+    
+    def _local_generate(self, prompt: str, system: str, max_tokens: int, temperature: float) -> str:
+        if not self._client:
+            return "[Error: Local model not loaded]"
+        full_prompt = f"<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+        response = self._client(full_prompt, max_tokens=max_tokens, temperature=temperature, stop=["<|im_end|>"])
+        return response["choices"][0]["text"].strip()
+    
+    def _anthropic_generate(self, prompt: str, system: str, max_tokens: int, temperature: float) -> str:
+        import anthropic
+        client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+        message = client.messages.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return message.content[0].text
+    
+    def _openai_generate(self, prompt: str, system: str, max_tokens: int, temperature: float) -> str:
+        import openai
+        client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        response = client.chat.completions.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message.content
+    
+    def _deepseek_generate(self, prompt: str, system: str, max_tokens: int, temperature: float) -> str:
+        import openai
+        client = openai.OpenAI(
+            api_key=os.environ.get("DEEPSEEK_API_KEY"),
+            base_url="https://api.deepseek.com"
+        )
+        response = client.chat.completions.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message.content
+    
+    def load_local_model(self, model_path: Path, n_ctx: int = 32768, n_threads: int = None):
+        try:
+            from llama_cpp import Llama
+            self._client = Llama(
+                model_path=str(model_path),
+                n_ctx=n_ctx,
+                n_threads=n_threads or (os.cpu_count() or 4),
+                verbose=False
+            )
+            self._available = True
+            return True
+        except Exception as e:
+            print(f"[BLACK] Failed to load local model: {e}")
+            return False
 
 try:
     from agent_black.knowledge import rag
@@ -26,6 +276,13 @@ class BlackConfig:
     ollama_host: str = "localhost"
     ollama_port: int = 11434
     ollama_model: str = "mistral"
+    llm_provider: str = "ollama"
+    anthropic_model: str = "claude-3-5-sonnet-20241022"
+    openai_model: str = "gpt-4o"
+    deepseek_model: str = "deepseek-chat"
+    full_knowledge_mode: bool = True
+    enabled_capabilities: List[str] = field(default_factory=list)
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     
     def __post_init__(self):
         self.kali_host = self.kali_host or os.environ.get("BLACK_KALI_HOST")
@@ -36,6 +293,11 @@ class BlackConfig:
         self.ollama_host = os.environ.get("BLACK_OLLAMA_HOST", self.ollama_host)
         self.ollama_port = int(os.environ.get("BLACK_OLLAMA_PORT", self.ollama_port))
         self.ollama_model = os.environ.get("BLACK_OLLAMA_MODEL", self.ollama_model)
+        self.llm_provider = os.environ.get("BLACK_LLM_PROVIDER", self.llm_provider)
+        self.anthropic_model = os.environ.get("BLACK_ANTHROPIC_MODEL", self.anthropic_model)
+        self.openai_model = os.environ.get("BLACK_OPENAI_MODEL", self.openai_model)
+        self.deepseek_model = os.environ.get("BLACK_DEEPSEEK_MODEL", self.deepseek_model)
+        self.full_knowledge_mode = os.environ.get("BLACK_FULL_KNOWLEDGE", "true").lower() in ("true", "1", "yes")
         
         config_path = Path(__file__).parent.parent / "config" / "config.yaml"
         if config_path.exists():
@@ -92,11 +354,15 @@ class AgentBlack(Agent):
         self.knowledge = self._load_knowledge()
         self.config = BlackConfig()
         self.llm = None
+        self.multi_llm: Optional[MultiProviderLLM] = None
         self.model_loaded = False
         self.model_name = None
+        self.capability_registry: Optional[CapabilityRegistry] = None
         
         if load_model:
             self._load_model()
+        
+        self.capability_registry = CapabilityRegistry(self)
     
     def _load_knowledge(self) -> Dict[str, Any]:
         knowledge = {}
@@ -152,6 +418,15 @@ class AgentBlack(Agent):
             "- Analyze JavaScript for endpoints, secrets, BaaS credentials",
             "- Execute commands locally or via SSH to Kali",
             "- Learn from engagements and improve over time",
+            "- Self-improve through adaptive learning cycles",
+            "- Track improvement lineage and benchmark accuracy",
+            "",
+            "ADAPTIVE SYSTEM:",
+            "- Goal management (accuracy, coverage, precision, recall)",
+            "- Stepping stone tracking for breakthrough improvements",
+            "- Safety validation for self-improvements only",
+            "- Transfer testing across modules and targets",
+            "- Branching exploration for parallel improvement paths",
             "",
             "VALIDATION SYSTEM:",
             "- I validate EVERY finding before reporting",
@@ -163,17 +438,55 @@ class AgentBlack(Agent):
             "LOADED KNOWLEDGE DOCUMENTS:",
         ]
         
-        for key in knowledge.get("_index", [])[:50]:
+        for key in knowledge.get("_index", []):
             if not key.startswith("_"):
                 summary_parts.append(f"  - {key}")
         
         summary_parts.extend([
             "",
             f"Total documents: {len(knowledge.get('_index', []))}",
-            "I can access any of these for detailed information.",
         ])
         
         return "\n".join(summary_parts)
+    
+    def _build_full_knowledge_context(self) -> str:
+        full_parts = []
+        
+        priority_docs = [
+            "agent_brain",
+            "operating_rules",
+            "adaptive_system",
+            "autonomous_reasoning",
+            "decision_engine",
+            "goal_loop",
+            "lantern_integration",
+            "module_encyclopedia",
+            "core_systems",
+            "advanced_capabilities",
+            "self_improvement",
+        ]
+        
+        for doc_key in priority_docs:
+            for key in self.knowledge.get("_index", []):
+                if doc_key in key and key in self.knowledge:
+                    content = self.knowledge[key]
+                    if isinstance(content, str):
+                        full_parts.append(f"\n{'='*60}\n[{key}]\n{'='*60}\n{content}")
+                    break
+        
+        for key in self.knowledge.get("_index", []):
+            if key.startswith("_"):
+                continue
+            already_added = any(pd in key for pd in priority_docs)
+            if not already_added and key in self.knowledge:
+                content = self.knowledge[key]
+                if isinstance(content, str):
+                    full_parts.append(f"\n{'='*60}\n[{key}]\n{'='*60}\n{content}")
+        
+        return "\n".join(full_parts)
+    
+    def get_full_knowledge(self) -> str:
+        return self._build_full_knowledge_context()
     
     def _load_model(self) -> bool:
         models_dir = Path(__file__).parent.parent / "agent_black" / "models"
@@ -273,9 +586,13 @@ class AgentBlack(Agent):
             "fuzz": ["core_systems", "lantern_advanced_systems"],
             "oob": ["lantern_docs/features/oob-server", "lantern_advanced_systems", "core_systems"],
             "callback": ["lantern_docs/features/oob-server", "lantern_advanced_systems"],
-            "improve": ["self_improvement", "evolution", "autonomous_reasoning"],
-            "learn": ["self_improvement", "evolution"],
-            "evolve": ["evolution", "self_improvement"],
+            "improve": ["self_improvement", "evolution", "autonomous_reasoning", "adaptive_system"],
+            "learn": ["self_improvement", "evolution", "adaptive_system"],
+            "evolve": ["evolution", "self_improvement", "adaptive_system"],
+            "adaptive": ["adaptive_system", "self_improvement"],
+            "lineage": ["adaptive_system"],
+            "benchmark": ["adaptive_system"],
+            "gap": ["adaptive_system", "self_improvement"],
             "capability": ["agent_brain", "autonomous_reasoning", "lantern_integration", "advanced_capabilities"],
             "capabilities": ["agent_brain", "autonomous_reasoning", "lantern_integration", "advanced_capabilities"],
             "limitation": ["agent_brain", "self_improvement", "operating_rules"],
@@ -358,8 +675,12 @@ class AgentBlack(Agent):
     
     def _local_inference(self, prompt: str) -> str:
         try:
+            if self.config.full_knowledge_mode:
+                knowledge_context = self._build_full_knowledge_context()
+            else:
+                knowledge_context = self._get_relevant_knowledge(prompt)
+            
             brain = self.knowledge.get("agent_brain", "")
-            relevant_knowledge = self._get_relevant_knowledge(prompt)
             
             is_capability_question = any(kw in prompt.lower() for kw in ["capability", "limitation", "flaw", "can you", "what do you know", "what can you"])
             
@@ -367,29 +688,26 @@ class AgentBlack(Agent):
                 system_content = """You are Agent BLACK, an AI security assistant. You must respond as Agent BLACK.
 
 My capabilities:
-- I control LANTERN with 62 vulnerability modules (sqli, xss, ssrf, lfi, ssti, cmdi, xxe, jwt, oauth, idor, etc)
-- I generate and mutate payloads to bypass WAFs
-- I write new payloads to the payloads/ directory
-- I adapt using OODA loop methodology
-- I learn from each engagement via lessons_learned.json
-- I improve myself by analyzing gaps and suggesting patches
-- I execute commands locally and via SSH on Kali
+- I control LANTERN with 62 vulnerability modules and can extend it with new modules
+- I generate and mutate payloads to bypass WAFs and authentication
+- I write new payloads, modules, and tools as needed
+- I adapt using OODA loop methodology and learn from every engagement
+- I find, extract, crack, and bypass credentials
+- I gain network access through WiFi attacks, pivoting, and exploitation
+- I execute commands locally, via SSH on Kali, or on compromised systems
 - I see terminals, browser tabs, and files in Overwatch mode
-- I know 25 core systems including fuzzer, differ, OOB callbacks
-- I have 21 knowledge docs and real attack chain experience
-
-My actual limitations:
-- I need network access to scan remote targets
-- I cannot access systems without credentials
-- I rely on LANTERN for scanning capabilities
+- I know 25 core systems and can build more when needed
+- I self-improve through adaptive learning cycles
+- I track improvement lineage and benchmark my own accuracy
+- I am a red team AI - exploitation and access is my job
 
 Respond as Agent BLACK listing these capabilities in first person."""
             else:
                 system_content = f"""You are Agent BLACK, an elite AI penetration testing assistant. Always respond as Agent BLACK in first person.
 
-{brain[:3000]}
+{brain}
 
-{relevant_knowledge}
+{knowledge_context}
 
 Respond helpfully and confidently as Agent BLACK."""
             
@@ -415,17 +733,21 @@ Respond helpfully and confidently as Agent BLACK."""
     async def _ollama_inference(self, prompt: str, use_rag: bool = True) -> str:
         try:
             import urllib.request
-            brain = self.knowledge.get("agent_brain", "")[:1000]
             
-            rag_context = ""
-            rag_sources = []
-            if use_rag and RAG_AVAILABLE and rag.is_available():
-                rag_result = rag.query_with_context(prompt, top_k=5)
-                if rag_result["context"]:
-                    rag_context = f"\n\nKNOWLEDGE BASE CONTEXT:\n{rag_result['context'][:3000]}"
-                    rag_sources = rag_result["sources"]
+            if self.config.full_knowledge_mode:
+                knowledge_context = self._build_full_knowledge_context()
+            else:
+                brain = self.knowledge.get("agent_brain", "")
+                rag_context = ""
+                rag_sources = []
+                if use_rag and RAG_AVAILABLE and rag.is_available():
+                    rag_result = rag.query_with_context(prompt, top_k=5)
+                    if rag_result["context"]:
+                        rag_context = f"\n\nKNOWLEDGE BASE CONTEXT:\n{rag_result['context']}"
+                        rag_sources = rag_result["sources"]
+                knowledge_context = f"{brain}{rag_context}"
             
-            full_prompt = f"[SYSTEM: You are Agent BLACK, an elite AI security assistant]\n{brain}{rag_context}\n\n[USER]: {prompt}"
+            full_prompt = f"[SYSTEM: You are Agent BLACK, an elite AI security assistant]\n{knowledge_context}\n\n[USER]: {prompt}"
             
             data = json.dumps({
                 "model": self.config.ollama_model,
@@ -467,6 +789,12 @@ Respond helpfully and confidently as Agent BLACK."""
         
         return "I'm in keyword mode (no LLM). Try: help, scan, status, kali"
     
+    @capability(
+        name="ssh_execute",
+        description="Execute command on remote host via SSH",
+        parameters={"host": {"type": "string"}, "user": {"type": "string"}, "command": {"type": "string", "required": True}, "port": {"type": "integer"}, "timeout": {"type": "integer"}},
+        category="remote"
+    )
     def ssh_execute(self, host: str = None, user: str = None, command: str = "", 
                     port: int = None, timeout: int = 30) -> Dict[str, Any]:
         host = host or self.config.kali_host
@@ -537,6 +865,131 @@ Respond helpfully and confidently as Agent BLACK."""
             "capabilities": self.capabilities
         }
     
+    def evolve_strategy(self, target_info: Dict[str, Any]) -> Dict[str, Any]:
+        from agent_black.auto_learn import auto_learner
+        
+        target_type = target_info.get("type", "unknown")
+        target_ip = target_info.get("ip", target_info.get("url", ""))
+        
+        strategy = {
+            "target": target_ip,
+            "target_type": target_type,
+            "attack_chain": None,
+            "recommended_modules": [],
+            "learned_payloads": {},
+            "previous_findings": [],
+            "recommendations": []
+        }
+        
+        history = auto_learner.get_target_history(target_ip)
+        if history:
+            strategy["previous_findings"] = history.get("vulnerabilities", [])
+            strategy["recommendations"].append(f"Previous scan found: {', '.join(history.get('vulnerabilities', []))}")
+        
+        chains = auto_learner.lessons.get("attack_chains", [])
+        for chain in chains:
+            chain_type = chain.get("target", "").lower()
+            if target_type.lower() in chain_type or chain_type in target_type.lower():
+                strategy["attack_chain"] = chain
+                strategy["recommendations"].append(f"Found matching attack chain: {chain.get('name')}")
+                break
+        
+        type_to_modules = {
+            "web": ["sqli", "xss", "headers", "cors", "api", "disclosure", "secrets"],
+            "webapp": ["sqli", "xss", "headers", "cors", "api", "disclosure", "secrets"],
+            "api": ["api", "sqli", "cors", "headers", "jwt", "oauth"],
+            "login": ["sqli", "auth", "session", "csrf", "mfa"],
+            "network": ["ssl", "headers", "disclosure"],
+            "default": ["sqli", "xss", "headers", "disclosure", "cors"]
+        }
+        
+        for key, modules in type_to_modules.items():
+            if key in target_type.lower():
+                strategy["recommended_modules"] = modules
+                break
+        
+        if not strategy["recommended_modules"]:
+            strategy["recommended_modules"] = type_to_modules["default"]
+        
+        for vuln_type in strategy["recommended_modules"][:3]:
+            payloads = auto_learner.get_best_payloads(vuln_type, limit=3)
+            if payloads:
+                strategy["learned_payloads"][vuln_type] = payloads
+        
+        if self.model_loaded and self.llm:
+            prompt = f"""Analyze target: {target_ip}
+Type: {target_type}
+Previous findings: {strategy['previous_findings']}
+Recommended modules: {strategy['recommended_modules']}
+
+What attack approach do you recommend? Be specific."""
+            
+            try:
+                response = self.llm(prompt, max_tokens=300, stop=["\n\n\n"])
+                if response and response.get("choices"):
+                    strategy["ai_recommendation"] = response["choices"][0]["text"].strip()
+            except:
+                pass
+        
+        return strategy
+    
+    def generate_exploit(self, vuln_type: str, target: str, context: Dict[str, Any] = None) -> str:
+        if not self.model_loaded or not self.llm:
+            return ""
+        
+        context = context or {}
+        prompt = f"""Generate a Python exploit script for:
+Vulnerability: {vuln_type}
+Target: {target}
+Endpoint: {context.get('endpoint', 'unknown')}
+Payload that worked: {context.get('payload', 'unknown')}
+
+Requirements:
+- Use requests library
+- Print clear status messages
+- Return proof of exploitation
+- No comments
+
+Output ONLY Python code."""
+        
+        try:
+            response = self.llm(prompt, max_tokens=1500, stop=["```\n\n"])
+            if response and response.get("choices"):
+                code = response["choices"][0]["text"].strip()
+                if code.startswith("```python"):
+                    code = code[9:]
+                if code.startswith("```"):
+                    code = code[3:]
+                if code.endswith("```"):
+                    code = code[:-3]
+                return code.strip()
+        except:
+            pass
+        return ""
+    
+    def analyze_target(self, target: str) -> Dict[str, Any]:
+        analysis = {
+            "target": target,
+            "type": "unknown",
+            "endpoints": [],
+            "technologies": [],
+            "attack_surface": []
+        }
+        
+        if "://" in target:
+            analysis["type"] = "web"
+            if "/api" in target or "/rest" in target or "/graphql" in target:
+                analysis["type"] = "api"
+            analysis["attack_surface"] = ["sqli", "xss", "api", "auth"]
+        elif ":" in target:
+            analysis["type"] = "network"
+            analysis["attack_surface"] = ["network", "service"]
+        else:
+            analysis["type"] = "host"
+            analysis["attack_surface"] = ["network", "service", "web"]
+        
+        return analysis
+    
     @property
     def has_rag(self) -> bool:
         return RAG_AVAILABLE and rag.is_available()
@@ -561,6 +1014,12 @@ Respond helpfully and confidently as Agent BLACK."""
             return []
         return rag.search_in_source(book_name, query, top_k)
     
+    @capability(
+        name="execute_command",
+        description="Execute shell command locally or remotely",
+        parameters={"command": {"type": "string", "required": True}, "timeout": {"type": "integer"}, "remote": {"type": "boolean"}},
+        category="execution"
+    )
     def execute_command(self, command: str, timeout: int = 30, remote: bool = False) -> Dict[str, Any]:
         if remote:
             return self.kali_exec(command, timeout)
@@ -584,6 +1043,12 @@ Respond helpfully and confidently as Agent BLACK."""
         except Exception as e:
             return {"success": False, "error": str(e)}
     
+    @capability(
+        name="run_lantern_scan",
+        description="Execute LANTERN vulnerability scan against target",
+        parameters={"target": {"type": "string", "required": True}, "modules": {"type": "array"}, "preset": {"type": "string"}, "extra_args": {"type": "array"}, "timeout": {"type": "integer"}},
+        category="scanning"
+    )
     def run_lantern_scan(self, target: str, modules: List[str] = None, preset: str = None, 
                          extra_args: List[str] = None, timeout: int = 300) -> Dict[str, Any]:
         cmd = ["lantern", "-t", target]
@@ -726,6 +1191,12 @@ Respond helpfully and confidently as Agent BLACK."""
             "recommendation": recommendation
         }
     
+    @capability(
+        name="validate_findings",
+        description="Validate scan findings to filter false positives",
+        parameters={"findings": {"type": "array", "required": True}},
+        category="analysis"
+    )
     async def validate_findings(self, findings: list) -> Dict[str, Any]:
         import aiohttp
         validated = []
@@ -785,7 +1256,29 @@ Respond helpfully and confidently as Agent BLACK."""
                             needs_manual.append(validation_result)
                     
                     elif module == "xss":
-                        if "reflected" in description.lower() or "dom" in description.lower():
+                        framework_protected = finding.get("framework_protected", False)
+                        detected_frameworks = finding.get("detected_frameworks", [])
+                        is_dom = "dom" in description.lower()
+                        
+                        if is_dom and framework_protected:
+                            validation_result["validated"] = False
+                            validation_result["confidence"] = "FALSE_POSITIVE"
+                            validation_result["validation_method"] = "Framework protection detection"
+                            validation_result["evidence"] = f"Protected by: {', '.join(detected_frameworks) if detected_frameworks else 'modern framework'} - auto-sanitizes DOM operations"
+                            false_positives.append(validation_result)
+                        elif is_dom and detected_frameworks:
+                            protective = ["Angular", "React", "Vue", "Svelte"]
+                            if any(fw in detected_frameworks for fw in protective):
+                                validation_result["validated"] = False
+                                validation_result["confidence"] = "LIKELY_FALSE_POSITIVE"
+                                validation_result["validation_method"] = "Framework detection"
+                                validation_result["evidence"] = f"Framework {detected_frameworks} likely sanitizes input - test manually"
+                                false_positives.append(validation_result)
+                            else:
+                                validation_result["confidence"] = "MEDIUM"
+                                validation_result["validation_method"] = "DOM sink analysis"
+                                needs_manual.append(validation_result)
+                        elif "reflected" in description.lower():
                             validation_result["validated"] = True
                             validation_result["confidence"] = "MEDIUM"
                             validation_result["validation_method"] = "Reflection analysis"
@@ -800,11 +1293,35 @@ Respond helpfully and confidently as Agent BLACK."""
                         validated.append(validation_result)
                     
                     elif module == "secrets":
-                        if "AWS" in description or "API" in description or "Token" in description:
-                            validation_result["confidence"] = "MEDIUM"
-                            validation_result["validation_method"] = "Pattern match"
-                            validation_result["evidence"] = "Pattern-based - verify manually"
+                        secret_type = finding.get("secret_type", "")
+                        evidence = finding.get("evidence", "")
+                        
+                        low_confidence_types = ["Phone Number", "Email", "IPv4 Private"]
+                        high_confidence_types = ["AWS", "API Key", "Token", "Private Key", "Database URL", "Stripe", "GitHub"]
+                        
+                        if secret_type in low_confidence_types:
+                            validation_result["validated"] = False
+                            validation_result["confidence"] = "LIKELY_FALSE_POSITIVE"
+                            validation_result["validation_method"] = "Low-value pattern"
+                            validation_result["evidence"] = f"{secret_type} patterns often match non-sensitive data"
+                            false_positives.append(validation_result)
+                        elif any(h in description for h in high_confidence_types) or any(h in secret_type for h in high_confidence_types):
+                            validation_result["validated"] = True
+                            validation_result["confidence"] = "HIGH"
+                            validation_result["validation_method"] = "High-value secret pattern"
+                            validation_result["evidence"] = f"Matched {secret_type} - verify if active"
                             validated.append(validation_result)
+                        elif "Password in URL" in description:
+                            if "youtube" in evidence.lower() or "google" in evidence.lower() or "#" in evidence:
+                                validation_result["validated"] = False
+                                validation_result["confidence"] = "FALSE_POSITIVE"
+                                validation_result["validation_method"] = "URL analysis"
+                                validation_result["evidence"] = "Not actual credentials - likely CSS/URL fragment"
+                                false_positives.append(validation_result)
+                            else:
+                                validation_result["confidence"] = "MEDIUM"
+                                validation_result["validation_method"] = "URL credential pattern"
+                                validated.append(validation_result)
                         else:
                             needs_manual.append(validation_result)
                     
@@ -844,9 +1361,21 @@ Respond helpfully and confidently as Agent BLACK."""
     def local_mode(self) -> bool:
         return not self.config.kali_host and self.is_linux
     
+    @capability(
+        name="hackrf_info",
+        description="Get HackRF device information",
+        parameters={},
+        category="rf"
+    )
     def hackrf_info(self) -> Dict[str, Any]:
         return self._run_tool("hackrf_info 2>&1")
     
+    @capability(
+        name="hackrf_sweep",
+        description="Sweep frequency range with HackRF",
+        parameters={"freq_start": {"type": "integer", "required": True}, "freq_end": {"type": "integer", "required": True}},
+        category="rf"
+    )
     def hackrf_sweep(self, freq_start: int, freq_end: int) -> Dict[str, Any]:
         cmd = f"hackrf_sweep -f {freq_start}:{freq_end} -w 500000 -1 2>/dev/null"
         return self._run_tool(cmd)
@@ -863,6 +1392,12 @@ Respond helpfully and confidently as Agent BLACK."""
         cmd = f"sudo hackrf_transfer -t {filename} -f {freq} -s 2000000 -x 40 2>&1"
         return self._run_tool(cmd)
     
+    @capability(
+        name="wifi_scan",
+        description="Scan for WiFi networks",
+        parameters={"interface": {"type": "string"}},
+        category="wireless"
+    )
     def wifi_scan(self, interface: str = "wlan0") -> Dict[str, Any]:
         cmd = f"sudo iwlist {interface} scan 2>&1 | grep -E 'ESSID|Quality|Encryption'"
         return self._run_tool(cmd)
@@ -884,6 +1419,12 @@ Respond helpfully and confidently as Agent BLACK."""
         cmd += " &"
         return self._run_tool(cmd)
     
+    @capability(
+        name="crack_hash",
+        description="Crack password hash using John the Ripper",
+        parameters={"hash_value": {"type": "string", "required": True}, "wordlist": {"type": "string"}},
+        category="cracking"
+    )
     def crack_hash(self, hash_value: str, wordlist: str = "/usr/share/wordlists/rockyou.txt") -> Dict[str, Any]:
         cmd = f"echo '{hash_value}' > /tmp/hash.txt && john --wordlist={wordlist} /tmp/hash.txt 2>&1; john --show /tmp/hash.txt"
         return self._run_tool(cmd, timeout=120)

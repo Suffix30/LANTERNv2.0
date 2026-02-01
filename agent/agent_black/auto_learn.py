@@ -1,18 +1,8 @@
-"""
-Auto-Learning System for Agent BLACK
-
-Automatically records successful patterns after scans:
-- Which payloads worked
-- Which modules found vulnerabilities
-- Target characteristics
-- Attack chains that succeeded
-"""
-
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Any, Optional
-
+from typing import Dict, List, Optional
+ 
 
 class AutoLearner:
     def __init__(self):

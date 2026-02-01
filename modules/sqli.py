@@ -260,7 +260,7 @@ class SqliModule(BaseModule):
                             self.injectable_payload = test_payload
                             self.record_success(test_payload, target)
                             
-                            confidence_evidence = ["error_message", "json_body_injection"]
+                            confidence_evidence = ["db_error_detailed", "syntax_error_triggered"]
                             if db_type != "Unknown":
                                 confidence_evidence.append("database_fingerprint")
                             
@@ -302,7 +302,7 @@ class SqliModule(BaseModule):
             if behavior and behavior.get("is_boolean_behavior"):
                 self.injectable_payload = true_payload
                 
-                confidence_evidence = ["response_difference", "json_body_injection"]
+                confidence_evidence = ["boolean_diff_verified", "response_anomaly"]
                 if behavior.get("indicator") == "length":
                     confidence_evidence.append("length_difference")
                 
@@ -352,7 +352,7 @@ class SqliModule(BaseModule):
                         self.detected_db = db_type
                         self.injectable_payload = payload
                         
-                        confidence_evidence = ["time_delay", "json_body_injection"]
+                        confidence_evidence = ["time_delay_verified"]
                         if avg_delay >= delay:
                             confidence_evidence.append("exact_delay_match")
                         
@@ -407,9 +407,9 @@ class SqliModule(BaseModule):
                             self.injectable_payload = test_payload
                             self.record_success(test_payload, target)
                             
-                            confidence_evidence = ["error_message", "database_fingerprint"]
+                            confidence_evidence = ["db_error_detailed", "syntax_error_triggered"]
                             if db_type != "Unknown":
-                                confidence_evidence.append("specific_dbms")
+                                confidence_evidence.append("version_extracted")
                             
                             self.add_finding(
                                 "CRITICAL",
@@ -419,7 +419,14 @@ class SqliModule(BaseModule):
                                 evidence=f"Database: {db_type}, Error triggered with: {test_payload[:50]}",
                                 confidence_evidence=confidence_evidence,
                                 request_data={"method": "GET", "url": target, "param": param, "payload": test_payload},
-                                response_data={"status": resp.get("status"), "text": resp.get("text", "")[:500]}
+                                response_data={"status": resp.get("status"), "text": resp.get("text", "")[:500], "headers": resp.get("headers", {})},
+                                technique="Error-based SQL Injection",
+                                payload=test_payload,
+                                injection_point=f"GET parameter: {param}",
+                                http_method="GET",
+                                status_code=resp.get("status"),
+                                detection_method="Database error pattern matching",
+                                matched_pattern=pattern[:50],
                             )
                             return True
         return False
@@ -456,7 +463,7 @@ class SqliModule(BaseModule):
                 self.injectable_param = param
                 self.injectable_payload = true_payload
                 
-                confidence_evidence = ["response_difference", "consistent_behavior"]
+                confidence_evidence = ["boolean_diff_verified"]
                 if behavior.get("indicator") == "length":
                     confidence_evidence.append("length_difference")
                 elif behavior.get("indicator") == "status":
@@ -469,7 +476,13 @@ class SqliModule(BaseModule):
                     parameter=param,
                     evidence=f"Indicator: {behavior.get('indicator')}, Confidence: {behavior.get('confidence', 0):.0%}",
                     confidence_evidence=confidence_evidence,
-                    request_data={"method": "GET", "url": target, "param": param, "payload": true_payload}
+                    request_data={"method": "GET", "url": target, "param": param, "payload": true_payload},
+                    technique="Boolean-based Blind SQL Injection",
+                    payload=f"TRUE: {true_payload} | FALSE: {false_payload}",
+                    injection_point=f"GET parameter: {param}",
+                    http_method="GET",
+                    detection_method=f"Response difference ({behavior.get('indicator')})",
+                    matched_pattern=f"True/False response differentiation: {behavior.get('confidence', 0):.0%} confidence",
                 )
                 return True
         
@@ -517,7 +530,7 @@ class SqliModule(BaseModule):
                         self.injectable_param = param
                         self.injectable_payload = payload
                         
-                        confidence_evidence = ["time_delay", "consistent_delay"]
+                        confidence_evidence = ["time_delay_verified"]
                         if avg_delay >= delay:
                             confidence_evidence.append("exact_delay_match")
                         
@@ -528,7 +541,14 @@ class SqliModule(BaseModule):
                             parameter=param,
                             evidence=f"Avg delay: {avg_delay:.2f}s (expected: {delay}s, baseline: {avg_baseline:.2f}s)",
                             confidence_evidence=confidence_evidence,
-                            request_data={"method": "GET", "url": target, "param": param, "payload": payload}
+                            request_data={"method": "GET", "url": target, "param": param, "payload": payload},
+                            technique=f"Time-based Blind SQL Injection ({db_type})",
+                            payload=payload,
+                            injection_point=f"GET parameter: {param}",
+                            http_method="GET",
+                            response_time=int(avg_delay * 1000),
+                            detection_method="Response time delay analysis",
+                            matched_pattern=f"Delay: {avg_delay:.2f}s (baseline: {avg_baseline:.2f}s)",
                         )
                         return True
         

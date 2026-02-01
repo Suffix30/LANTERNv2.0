@@ -2,6 +2,59 @@ try:
     from .main import main
 except ImportError:
     main = None
+  
+try:
+    from .learning import (
+        ImprovementLineage,
+        MeritSelector,
+        GoalManager,
+        SteppingStoneTracker,
+        SafetyValidator,
+        record_scan_result,
+        record_module_effectiveness,
+        record_successful_payload,
+        get_target_profile,
+        get_recommended_modules,
+        get_prioritized_payloads,
+        get_learning_summary,
+        get_lineage_summary,
+    )
+except ImportError:
+    ImprovementLineage = None
+    MeritSelector = None
+    GoalManager = None
+    SteppingStoneTracker = None
+    SafetyValidator = None
+
+try:
+    from .smart_probe import SmartProbe, GapAnalyzer, run_gap_analysis
+except ImportError:
+    SmartProbe = None
+    GapAnalyzer = None
+
+try:
+    from .improvement_applier import (
+        IsolatedTester,
+        TransferTester,
+        test_improvement_safely,
+        run_with_regression_check,
+        test_transfer_across_modules,
+        test_transfer_across_targets,
+    )
+except ImportError:
+    IsolatedTester = None
+    TransferTester = None
+
+try:
+    from .adaptive_engine import AdaptiveEngine, run_adaptive_cycle, get_engine_status
+except ImportError:
+    AdaptiveEngine = None
+
+try:
+    from .visualize import LineageVisualizer, VISUALIZATION_DIR
+except ImportError:
+    LineageVisualizer = None
+    VISUALIZATION_DIR = None
 
 from .ctf_utils import (
     FLAG_PATTERNS,
@@ -53,6 +106,33 @@ from .ctf_utils import (
 
 __all__ = [
     "main",
+    "ImprovementLineage",
+    "MeritSelector",
+    "GoalManager",
+    "SteppingStoneTracker",
+    "SafetyValidator",
+    "SmartProbe",
+    "GapAnalyzer",
+    "IsolatedTester",
+    "TransferTester",
+    "AdaptiveEngine",
+    "LineageVisualizer",
+    "VISUALIZATION_DIR",
+    "run_adaptive_cycle",
+    "get_engine_status",
+    "run_gap_analysis",
+    "test_improvement_safely",
+    "run_with_regression_check",
+    "test_transfer_across_modules",
+    "test_transfer_across_targets",
+    "record_scan_result",
+    "record_module_effectiveness",
+    "record_successful_payload",
+    "get_target_profile",
+    "get_recommended_modules",
+    "get_prioritized_payloads",
+    "get_learning_summary",
+    "get_lineage_summary",
     "FLAG_PATTERNS",
     "detect_encoding",
     "decode_base64",

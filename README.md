@@ -1,5 +1,10 @@
 # LANTERN
 
+[![CI](https://github.com/Suffix30/LANTERNv2.0/actions/workflows/ci.yml/badge.svg)](https://github.com/Suffix30/LANTERNv2.0/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Suffix30/LANTERNv2.0/actions/workflows/codeql.yml/badge.svg)](https://github.com/Suffix30/LANTERNv2.0/actions/workflows/codeql.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 ```
  ██▓    ▄▄▄       ███▄    █ ▄▄▄█████▓▓█████  ██▀███   ███▄    █ 
 ▓██▒   ▒████▄     ██ ▀█   █ ▓  ██▒ ▓▒▓█   ▀ ▓██ ▒ ██▒ ██ ▀█   █ 
@@ -13,6 +18,69 @@
 ```
 
 Web vulnerability scanner with automatic exploitation. 62 modules, async architecture, attack chains, and actual data extraction.
+
+## Installation
+
+### Option 1: pip (Recommended)
+
+```bash
+pip install git+https://github.com/Suffix30/LANTERNv2.0.git
+```
+
+### Option 2: pipx (Isolated Environment)
+
+```bash
+pipx install git+https://github.com/Suffix30/LANTERNv2.0.git
+```
+
+### Option 3: From Source
+
+```bash
+git clone https://github.com/Suffix30/LANTERNv2.0.git
+cd LANTERNv2.0
+pip install -e .
+```
+
+### Update to Latest Version
+
+```bash
+# If installed via pip
+pip install --upgrade git+https://github.com/Suffix30/LANTERNv2.0.git
+
+# If installed via pipx
+pipx upgrade lantern-scanner
+# Or reinstall for major updates:
+pipx uninstall lantern-scanner && pipx install git+https://github.com/Suffix30/LANTERNv2.0.git
+
+# If installed from source
+cd LANTERNv2.0
+git pull
+pip install -e .
+```
+
+### With Agent BLACK (AI Features)
+
+```bash
+pip install "lantern-scanner[agent] @ git+https://github.com/Suffix30/LANTERNv2.0.git"
+```
+
+## Quick Examples
+
+```bash
+# Basic scan
+lantern -t https://target.com
+
+# Injection testing with report
+lantern -t https://target.com -m sqli,xss,ssti -o report --format html
+
+# Full attack chain
+lantern -t https://target.com --chain auth_bypass --exploit
+
+# AI-powered autonomous attack
+black autonomous https://target.com --attack
+```
+
+**[Full Command Reference](docs/COMMANDS.md)** | **[Quick Start Guide](docs/QUICKSTART.md)** | **[Documentation](docs/INDEX.md)**
 
 ## Features
 
@@ -67,13 +135,12 @@ LANTERN includes **Agent BLACK**, an AI-powered security assistant.
 ### Quick Start
 
 ```bash
-pip install -e .
+pip install "lantern-scanner[agent] @ git+https://github.com/Suffix30/LANTERNv2.0.git"
 
 black chat                    # Interactive chat
 black overwatch --snapshot    # Analyze current situation
 black overwatch --watch       # Continuous monitoring with alerts
 black autonomous <target>     # Autonomous scanning
-black obsidian init ~/Docs    # Create Obsidian security vault
 black status                  # Check agent status
 ```
 
@@ -87,48 +154,6 @@ Watch mode detects and alerts on:
 - Errors and failures
 
 **[→ Full Agent BLACK Documentation](agent/docs/SETUP.md)**
-
-## Install
-
-### pipx (recommended)
-```bash
-pipx install git+https://github.com/Suffix30/LANTERNv2.0.git
-```
-
-### pip
-```bash
-pip install git+https://github.com/Suffix30/LANTERNv2.0.git
-```
-
-### From source
-```bash
-git clone https://github.com/Suffix30/LANTERNv2.0.git
-cd LANTERNv2.0
-pip install -e .
-```
-
-Python 3.10+ required.
-
-## Quick Start
-
-```bash
-lantern -t https://target.com -o report
-
-lantern -t https://target.com --crawl --deep
-
-lantern -t https://target.com -m sqli,xss,ssrf --aggressive
-
-lantern -t https://target.com --fast
-```
-
-## Documentation
-
-For comprehensive guides on all features, see the [Documentation Index](docs/INDEX.md).
-
-**Quick links:**
-- [Quick Reference](docs/guides/reference.md) - Essential commands and flag combinations
-- [Module Guides](docs/INDEX.md#module-guides) - Injection, Auth, API, Recon, RCE, and more
-- [Feature Guides](docs/INDEX.md#feature-guides) - Workflows, JS Analysis, CVE Scanning, WAF Bypass
 
 ## Subdomain Brute Force
 

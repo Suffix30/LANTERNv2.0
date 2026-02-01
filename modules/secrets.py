@@ -36,7 +36,7 @@ class SecretsModule(BaseModule):
         "JWT Token": (r'eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*', "MEDIUM"),
         "Basic Auth": (r'[Bb]asic [A-Za-z0-9+/=]{10,}', "HIGH"),
         "Bearer Token": (r'[Bb]earer [a-zA-Z0-9_\-\.]+', "HIGH"),
-        "Password in URL": (r'[a-zA-Z]+://[^:]+:[^@]+@', "HIGH"),
+        "Password in URL": (r'(?:https?|ftp|mysql|postgres|mongodb|redis|amqp)://[a-zA-Z0-9_.-]+:[a-zA-Z0-9_!@#$%^&*()-]+@[a-zA-Z0-9.-]+', "HIGH"),
         "Database URL": (r'(?:mysql|postgres|mongodb|redis)://[^\s"\']+', "CRITICAL"),
         "S3 Bucket": (r's3://[a-zA-Z0-9\.\-_]+', "MEDIUM"),
         "S3 URL": (r'[a-zA-Z0-9\-]+\.s3\.amazonaws\.com', "MEDIUM"),
@@ -49,7 +49,7 @@ class SecretsModule(BaseModule):
         "Cognito Pool": (r'aws_user_pools_id[\'"]?\s*[:=]\s*[\'"][^\'"]+', "HIGH"),
         "IPv4 Private": (r'\b(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d{1,3}\.\d{1,3}\b', "LOW"),
         "Email": (r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', "INFO"),
-        "Phone Number": (r'\+?1?[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', "INFO"),
+        "Phone Number": (r'(?<![.\d/])(?:\+1[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]\d{3}[-.\s]\d{4}(?![.\d])', "INFO"),
         "SSN": (r'\b\d{3}-\d{2}-\d{4}\b', "CRITICAL"),
         "Credit Card": (r'\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b', "CRITICAL"),
     }
@@ -114,12 +114,31 @@ class SecretsModule(BaseModule):
                     }
         
         for secret_name, data in found_secrets.items():
-            masked = [m[:8] + "..." + m[-4:] if len(m) > 16 else m[:4] + "..." for m in data["matches"]]
+            full_matches = data["matches"][:3]
+            masked = []
+            for m in full_matches:
+                if len(m) > 40:
+                    masked.append(m[:20] + "..." + m[-10:])
+                elif len(m) > 20:
+                    masked.append(m[:12] + "..." + m[-6:])
+                else:
+                    masked.append(m)
+            pattern_used = self.secret_patterns.get(secret_name, (None, None))[0]
+            grep_cmd = f"grep -oE '{pattern_used}' response.html" if pattern_used else "N/A"
             self.add_finding(
                 data["severity"],
                 f"Secret found: {secret_name}",
                 url=url,
-                evidence=f"Values: {', '.join(masked)}"
+                evidence=f"Found {len(data['matches'])} match(es): {', '.join(masked)}",
+                technique="Pattern-based secret detection",
+                payload=None,
+                injection_point="Response body content",
+                http_method="GET",
+                detection_method=f"Regex pattern matching for {secret_name}",
+                matched_pattern=pattern_used if pattern_used else "N/A",
+                secret_type=secret_name,
+                match_count=len(data["matches"]),
+                grep_command=grep_cmd,
             )
     
     spa_indicators = [
@@ -208,11 +227,21 @@ class SecretsModule(BaseModule):
             
             if is_valid:
                 content_type = resp.get("headers", {}).get("content-type", "unknown")
+                content_preview = content[:200].replace('\n', ' ').replace('\r', '') if content else ""
                 self.add_finding(
                     "CRITICAL",
                     f"Sensitive file exposed: {path}",
                     url=url,
                     evidence=f"Size: {content_len} bytes | Validation: {validation_msg} | Type: {content_type}",
-                    confidence="HIGH"
+                    confidence="HIGH",
+                    request_data={"method": "GET", "url": url},
+                    response_data={"status": resp.get("status"), "headers": resp.get("headers", {}), "text": content[:1000]},
+                    technique="Sensitive file enumeration",
+                    injection_point=f"Path: {path}",
+                    http_method="GET",
+                    status_code=resp.get("status"),
+                    content_length=content_len,
+                    detection_method="File path enumeration with content validation",
+                    matched_pattern=f"File exists, content validated: {validation_msg}",
                 )
                 await self._scan_content(url, content)

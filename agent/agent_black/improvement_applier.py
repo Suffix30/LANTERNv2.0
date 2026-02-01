@@ -1,20 +1,20 @@
-"""
-Agent BLACK Improvement Applier
-Takes improvement logs and generates/applies patches to Lantern modules
-""" 
-
 import json
 import re
+import subprocess
+import tempfile
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from collections import defaultdict
-
+ 
 
 IMPROVEMENT_LOG_DIR = Path(__file__).parent / "improvement_logs"
-LANTERN_PATH = Path("/home/kali/Shared/LANTERNv2.0-main")
+LANTERN_PATH = Path(__file__).parent.parent.parent
 PATCHES_DIR = Path(__file__).parent / "lantern_patches"
 PATCHES_DIR.mkdir(exist_ok=True)
+SANDBOX_DIR = Path(__file__).parent / "sandbox"
+SANDBOX_DIR.mkdir(exist_ok=True)
 
 
 def load_all_improvements() -> list[dict[str, Any]]:
@@ -1043,6 +1043,425 @@ def full_improvement_cycle(target: str, lantern_path: Path | None = None) -> str
     ])
     
     return "\n".join(lines)
+
+
+class IsolatedTester:
+    def __init__(self, lantern_path: Optional[Path] = None):
+        self.lantern_path = lantern_path or LANTERN_PATH
+        self.sandbox_path = SANDBOX_DIR / f"sandbox_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+        self._docker_available = self._check_docker()
+    
+    def _check_docker(self) -> bool:
+        try:
+            result = subprocess.run(
+                ["docker", "version"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return result.returncode == 0
+        except:
+            return False
+    
+    def create_sandbox(self) -> bool:
+        try:
+            if self.sandbox_path.exists():
+                shutil.rmtree(self.sandbox_path)
+            
+            shutil.copytree(
+                self.lantern_path,
+                self.sandbox_path,
+                ignore=shutil.ignore_patterns(
+                    "*.pyc", "__pycache__", ".git", "*.egg-info",
+                    "reports", "*.log", "node_modules"
+                )
+            )
+            return True
+        except Exception as e:
+            print(f"[IsolatedTester] Failed to create sandbox: {e}")
+            return False
+    
+    def apply_patch_to_sandbox(self, patch_content: str) -> dict[str, Any]:
+        result = {"success": False, "files_modified": [], "errors": []}
+        
+        patch_file = self.sandbox_path / "pending_patch.txt"
+        patch_file.write_text(patch_content, encoding="utf-8")
+        
+        try:
+            apply_result = subprocess.run(
+                ["git", "apply", "--stat", str(patch_file)],
+                capture_output=True,
+                text=True,
+                cwd=str(self.sandbox_path),
+                timeout=30
+            )
+            
+            if apply_result.returncode == 0:
+                apply_real = subprocess.run(
+                    ["git", "apply", str(patch_file)],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(self.sandbox_path),
+                    timeout=30
+                )
+                
+                if apply_real.returncode == 0:
+                    result["success"] = True
+                    result["files_modified"] = apply_result.stdout.strip().split("\n")
+                else:
+                    result["errors"].append(apply_real.stderr)
+            else:
+                result["errors"].append(apply_result.stderr)
+                
+        except Exception as e:
+            result["errors"].append(str(e))
+        
+        return result
+    
+    def run_tests_in_sandbox(self, test_target: Optional[str] = None) -> dict[str, Any]:
+        result = {
+            "success": False,
+            "passed": 0,
+            "failed": 0,
+            "errors": [],
+            "output": "",
+            "accuracy_score": 0.0,
+        }
+        
+        try:
+            if test_target:
+                cmd = [
+                    "python", "-m", "lantern",
+                    "-t", test_target,
+                    "-m", "sqli,xss,headers",
+                    "--format", "json",
+                    "-o", "sandbox_test",
+                    "--quiet"
+                ]
+            else:
+                cmd = ["python", "-m", "pytest", "tests/", "-v", "--tb=short"]
+            
+            test_result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=str(self.sandbox_path),
+                timeout=120,
+                encoding="utf-8",
+                errors="replace"
+            )
+            
+            result["output"] = test_result.stdout + test_result.stderr
+            result["success"] = test_result.returncode == 0
+            
+            if "passed" in result["output"]:
+                import re
+                passed_match = re.search(r"(\d+) passed", result["output"])
+                failed_match = re.search(r"(\d+) failed", result["output"])
+                
+                if passed_match:
+                    result["passed"] = int(passed_match.group(1))
+                if failed_match:
+                    result["failed"] = int(failed_match.group(1))
+                
+                total = result["passed"] + result["failed"]
+                if total > 0:
+                    result["accuracy_score"] = result["passed"] / total
+            
+        except subprocess.TimeoutExpired:
+            result["errors"].append("Test timeout")
+        except Exception as e:
+            result["errors"].append(str(e))
+        
+        return result
+    
+    def run_in_container(self, patch_content: str, test_target: Optional[str] = None) -> dict[str, Any]:
+        if not self._docker_available:
+            return self._run_in_sandbox_fallback(patch_content, test_target)
+        
+        result = {
+            "success": False,
+            "container_id": None,
+            "accuracy_before": 0.0,
+            "accuracy_after": 0.0,
+            "errors": [],
+        }
+        
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                patch_file = Path(tmpdir) / "patch.txt"
+                patch_file.write_text(patch_content, encoding="utf-8")
+                
+                dockerfile = Path(tmpdir) / "Dockerfile"
+                dockerfile.write_text(f"""
+FROM python:3.11-slim
+WORKDIR /lantern
+COPY {self.lantern_path} /lantern
+COPY patch.txt /patch.txt
+RUN pip install -e .
+CMD ["python", "-m", "lantern", "--help"]
+""", encoding="utf-8")
+                
+                build_result = subprocess.run(
+                    ["docker", "build", "-t", "lantern-sandbox", tmpdir],
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+                
+                if build_result.returncode != 0:
+                    result["errors"].append(f"Docker build failed: {build_result.stderr}")
+                    return result
+                
+                run_result = subprocess.run(
+                    ["docker", "run", "--rm", "lantern-sandbox", 
+                     "sh", "-c", "git apply /patch.txt && python -m pytest tests/ -v"],
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+                
+                result["success"] = run_result.returncode == 0
+                result["output"] = run_result.stdout + run_result.stderr
+                
+        except Exception as e:
+            result["errors"].append(str(e))
+        
+        return result
+    
+    def _run_in_sandbox_fallback(self, patch_content: str, test_target: Optional[str] = None) -> dict[str, Any]:
+        result = {
+            "success": False,
+            "accuracy_before": 0.0,
+            "accuracy_after": 0.0,
+            "errors": [],
+            "method": "sandbox_fallback"
+        }
+        
+        if not self.create_sandbox():
+            result["errors"].append("Failed to create sandbox")
+            return result
+        
+        before_test = self.run_tests_in_sandbox(test_target)
+        result["accuracy_before"] = before_test.get("accuracy_score", 0.0)
+        
+        apply_result = self.apply_patch_to_sandbox(patch_content)
+        if not apply_result["success"]:
+            result["errors"].extend(apply_result["errors"])
+            return result
+        
+        after_test = self.run_tests_in_sandbox(test_target)
+        result["accuracy_after"] = after_test.get("accuracy_score", 0.0)
+        
+        result["success"] = result["accuracy_after"] >= result["accuracy_before"]
+        result["accuracy_delta"] = result["accuracy_after"] - result["accuracy_before"]
+        
+        self.cleanup()
+        
+        return result
+    
+    def cleanup(self):
+        try:
+            if self.sandbox_path.exists():
+                shutil.rmtree(self.sandbox_path)
+        except:
+            pass
+
+
+def test_improvement_safely(patch_content: str, test_target: Optional[str] = None) -> dict[str, Any]:
+    tester = IsolatedTester()
+    return tester._run_in_sandbox_fallback(patch_content, test_target)
+
+
+def run_with_regression_check(
+    patch_content: str,
+    lantern_path: Optional[Path] = None,
+    test_target: Optional[str] = None,
+) -> dict[str, Any]:
+    from .learning import ImprovementLineage, MeritSelector
+    
+    tester = IsolatedTester(lantern_path)
+    lineage = ImprovementLineage()
+    
+    result = tester._run_in_sandbox_fallback(patch_content, test_target)
+    
+    if result["success"] and result.get("accuracy_delta", 0) > 0:
+        parent_id = lineage.get_best_node_id()
+        
+        improvement_id = lineage.add_improvement(
+            parent_id=parent_id,
+            patch_content=patch_content,
+            accuracy_before=result["accuracy_before"],
+            accuracy_after=result["accuracy_after"],
+            description=f"Auto-improvement from gap analysis",
+            metadata={"test_target": test_target, "method": result.get("method")}
+        )
+        
+        result["improvement_id"] = improvement_id
+        result["added_to_lineage"] = True
+    else:
+        result["added_to_lineage"] = False
+        result["rejection_reason"] = "No accuracy improvement" if result["success"] else "Test failures"
+    
+    return result
+
+
+class TransferTester:
+    def __init__(self, lantern_path: Optional[Path] = None):
+        self.lantern_path = lantern_path or LANTERN_PATH
+        self.transfer_results_dir = Path(__file__).parent / "transfer_results"
+        self.transfer_results_dir.mkdir(exist_ok=True)
+    
+    def test_cross_module_transfer(
+        self,
+        patch_content: str,
+        source_module: str,
+        target_modules: list[str],
+        test_target: Optional[str] = None,
+    ) -> dict[str, Any]:
+        results = {
+            "source_module": source_module,
+            "target_modules": {},
+            "transfer_success_rate": 0.0,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        
+        successful = 0
+        tester = IsolatedTester(self.lantern_path)
+        
+        for target_module in target_modules:
+            adapted_patch = self._adapt_patch_for_module(patch_content, source_module, target_module)
+            
+            if not adapted_patch:
+                results["target_modules"][target_module] = {
+                    "success": False,
+                    "reason": "Could not adapt patch",
+                }
+                continue
+            
+            test_result = tester._run_in_sandbox_fallback(adapted_patch, test_target)
+            
+            module_result = {
+                "success": test_result.get("success", False),
+                "accuracy_delta": test_result.get("accuracy_delta", 0),
+            }
+            
+            if module_result["success"] and module_result["accuracy_delta"] >= 0:
+                successful += 1
+            
+            results["target_modules"][target_module] = module_result
+        
+        if target_modules:
+            results["transfer_success_rate"] = successful / len(target_modules)
+        
+        self._save_transfer_result(results)
+        return results
+    
+    def test_cross_target_transfer(
+        self,
+        patch_content: str,
+        source_target: str,
+        test_targets: list[str],
+    ) -> dict[str, Any]:
+        results = {
+            "source_target": source_target,
+            "test_targets": {},
+            "transfer_success_rate": 0.0,
+            "generalization_score": 0.0,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        
+        successful = 0
+        total_delta = 0.0
+        tester = IsolatedTester(self.lantern_path)
+        
+        for target in test_targets:
+            test_result = tester._run_in_sandbox_fallback(patch_content, target)
+            
+            target_result = {
+                "success": test_result.get("success", False),
+                "accuracy_before": test_result.get("accuracy_before", 0),
+                "accuracy_after": test_result.get("accuracy_after", 0),
+                "accuracy_delta": test_result.get("accuracy_delta", 0),
+            }
+            
+            if target_result["success"] and target_result["accuracy_delta"] >= 0:
+                successful += 1
+                total_delta += target_result["accuracy_delta"]
+            
+            results["test_targets"][target] = target_result
+        
+        if test_targets:
+            results["transfer_success_rate"] = successful / len(test_targets)
+            results["generalization_score"] = total_delta / len(test_targets)
+        
+        self._save_transfer_result(results)
+        return results
+    
+    def _adapt_patch_for_module(self, patch_content: str, source: str, target: str) -> Optional[str]:
+        if source == target:
+            return patch_content
+        
+        adapted = patch_content.replace(f"modules/{source}.py", f"modules/{target}.py")
+        adapted = adapted.replace(f"{source.upper()}_", f"{target.upper()}_")
+        
+        module_specific = [
+            "SQLI_PAYLOADS", "XSS_PAYLOADS", "LFI_PAYLOADS", "SSTI_PAYLOADS",
+            "CMDI_PAYLOADS", "SSRF_PAYLOADS", "XXE_PAYLOADS",
+        ]
+        
+        for specific in module_specific:
+            if source.upper() in specific and target.upper() not in specific:
+                return None
+        
+        return adapted
+    
+    def _save_transfer_result(self, result: dict[str, Any]):
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        result_file = self.transfer_results_dir / f"transfer_{timestamp}.json"
+        result_file.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    
+    def get_transfer_summary(self) -> dict[str, Any]:
+        results = list(self.transfer_results_dir.glob("transfer_*.json"))
+        
+        if not results:
+            return {"total_tests": 0, "avg_success_rate": 0.0}
+        
+        total_tests = len(results)
+        total_success = 0.0
+        
+        for result_file in results:
+            try:
+                data = json.loads(result_file.read_text(encoding="utf-8"))
+                total_success += data.get("transfer_success_rate", 0)
+            except:
+                pass
+        
+        return {
+            "total_tests": total_tests,
+            "avg_success_rate": total_success / total_tests if total_tests else 0,
+        }
+
+
+def test_transfer_across_modules(
+    patch_content: str,
+    source_module: str,
+    test_target: Optional[str] = None,
+) -> dict[str, Any]:
+    all_modules = ["sqli", "xss", "lfi", "ssti", "cmdi", "ssrf", "headers", "secrets"]
+    target_modules = [m for m in all_modules if m != source_module]
+    
+    tester = TransferTester()
+    return tester.test_cross_module_transfer(patch_content, source_module, target_modules, test_target)
+
+
+def test_transfer_across_targets(
+    patch_content: str,
+    source_target: str,
+    test_targets: list[str],
+) -> dict[str, Any]:
+    tester = TransferTester()
+    return tester.test_cross_target_transfer(patch_content, source_target, test_targets)
 
 
 if __name__ == "__main__":

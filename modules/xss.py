@@ -174,7 +174,14 @@ class XssModule(BaseModule):
                         evidence=f"Payload reflected unfiltered, encoding: {encoding}",
                         confidence_evidence=confidence_evidence,
                         request_data={"method": "GET", "url": target, "param": param, "payload": payload},
-                        response_data={"status": resp.get("status"), "text": resp.get("text", "")[:500]}
+                        response_data={"status": resp.get("status"), "text": resp.get("text", "")[:500], "headers": resp.get("headers", {})},
+                        technique="Reflected Cross-Site Scripting",
+                        payload=payload,
+                        injection_point=f"GET parameter: {param}",
+                        http_method="GET",
+                        status_code=resp.get("status"),
+                        detection_method=f"Payload reflection check (context: {context})",
+                        matched_pattern=f"Encoding: {encoding}, Context: {context}",
                     )
                     return
     
@@ -244,7 +251,15 @@ class XssModule(BaseModule):
                             f"XSS via {header} header",
                             url=target,
                             parameter=header,
-                            evidence=f"Header value reflected unsanitized"
+                            evidence=f"Header value reflected unsanitized",
+                            request_data={"method": "GET", "url": target, "headers": {header: payload}, "payload": payload},
+                            response_data={"status": resp.get("status"), "text": resp.get("text", "")[:500]},
+                            technique="Header-based XSS Injection",
+                            payload=payload,
+                            injection_point=f"HTTP Header: {header}",
+                            http_method="GET",
+                            status_code=resp.get("status"),
+                            detection_method="Header value reflection check",
                         )
                         return
     
@@ -320,14 +335,48 @@ class XssModule(BaseModule):
                 tainted = [s for s in js_result.dom_sinks if s.tainted]
                 
                 if tainted:
-                    confidence_evidence = ["dom_sink_detected", "tainted_source"]
+                    sink = tainted[0]
+                    sink_details = f"Sink: {sink.sink_type} | Source: {getattr(sink, 'source', 'user input')} | Line: {sink.line_number}"
+                    
+                    frameworks = getattr(js_result, 'frameworks_detected', []) or []
+                    protected_frameworks = ['Angular', 'React', 'Vue', 'Svelte']
+                    has_protection = any(fw in frameworks for fw in protected_frameworks)
+                    
+                    if has_protection:
+                        severity = "INFO"
+                        confidence_evidence = ["dom_sink_detected", "tainted_source", "framework_protection_likely"]
+                        sink_details += f" | ⚠️ Framework detected: {', '.join([f for f in frameworks if f in protected_frameworks])} (may sanitize automatically)"
+                        description = f"DOM-based XSS (tainted data flow) - LIKELY PROTECTED by framework"
+                    else:
+                        severity = "HIGH"
+                        confidence_evidence = ["dom_sink_detected", "tainted_source"]
+                        description = f"DOM-based XSS (tainted data flow)"
+                    
+                    test_payloads = {
+                        "location assignment": f"{target}#<script>alert(1)</script>",
+                        "innerHTML": f"{target}?q=<img src=x onerror=alert(1)>",
+                        "document.write": f"{target}?input=<script>alert(1)</script>",
+                        "eval": f"{target}?code=alert(1)",
+                    }
+                    test_url = test_payloads.get(sink.sink_type, f"{target}#<script>alert(1)</script>")
                     
                     self.add_finding(
-                        "HIGH",
-                        f"DOM-based XSS (tainted data flow)",
+                        severity,
+                        description,
                         url=target,
-                        evidence=f"Tainted sinks: {len(tainted)}, e.g. {tainted[0].sink_type} at line {tainted[0].line_number}",
-                        confidence_evidence=confidence_evidence
+                        evidence=sink_details,
+                        confidence_evidence=confidence_evidence,
+                        technique="DOM-based XSS via tainted data flow",
+                        payload="<script>alert(1)</script> or <img src=x onerror=alert(1)>",
+                        injection_point=f"DOM sink: {sink.sink_type} (line {sink.line_number})",
+                        http_method="GET (browser-based)",
+                        detection_method="Static JavaScript analysis - tainted source to sink flow",
+                        matched_pattern=f"Source: {getattr(sink, 'source', 'location/URL')} -> Sink: {sink.sink_type}",
+                        test_url=test_url,
+                        dom_sink_type=sink.sink_type,
+                        requires_browser=True,
+                        framework_protected=has_protection,
+                        detected_frameworks=frameworks,
                     )
                     return
                 elif js_result.dom_sinks:

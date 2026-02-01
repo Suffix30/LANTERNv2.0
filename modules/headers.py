@@ -152,7 +152,12 @@ class HeadersModule(BaseModule):
                     info["description"],
                     url=target,
                     evidence=f"Missing header: {header}",
-                    confidence_evidence=["header_missing"]
+                    confidence_evidence=["header_missing"],
+                    technique="Security header analysis",
+                    injection_point="HTTP Response Headers",
+                    http_method="GET",
+                    detection_method=f"Header presence check for {header}",
+                    matched_pattern=f"{header} header not found in response",
                 )
     
     async def _check_dangerous_headers(self, target, headers):
@@ -244,7 +249,12 @@ class HeadersModule(BaseModule):
                     "CSP has critical weaknesses",
                     url=target,
                     evidence="; ".join([i[1] for i in high_issues[:3]]),
-                    confidence_evidence=["csp_weak", "xss_risk"]
+                    confidence_evidence=["csp_weak", "xss_risk"],
+                    technique="Content Security Policy analysis",
+                    injection_point="Content-Security-Policy header",
+                    http_method="GET",
+                    detection_method="CSP directive analysis",
+                    matched_pattern=f"Issues: {', '.join([i[0] for i in high_issues[:3]])}",
                 )
             elif medium_issues:
                 self.add_finding(
@@ -252,7 +262,12 @@ class HeadersModule(BaseModule):
                     "CSP has moderate weaknesses",
                     url=target,
                     evidence="; ".join([i[1] for i in medium_issues[:3]]),
-                    confidence_evidence=["csp_issues"]
+                    confidence_evidence=["csp_issues"],
+                    technique="Content Security Policy analysis",
+                    injection_point="Content-Security-Policy header",
+                    http_method="GET",
+                    detection_method="CSP directive analysis",
+                    matched_pattern=f"Issues: {', '.join([i[0] for i in medium_issues[:3]])}",
                 )
     
     def _parse_csp(self, csp):

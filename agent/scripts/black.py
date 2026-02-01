@@ -2429,7 +2429,29 @@ print("Scan complete.")
                                 print(f"{'─'*40}")
                                 
                                 if validation.get("false_positives"):
-                                    print(f"\n[BLACK] Filtered {len(validation['false_positives'])} false positives (SPA fallbacks, HTML responses)")
+                                    fp_list = validation['false_positives']
+                                    print(f"\n[BLACK] ❌ FILTERED {len(fp_list)} FALSE POSITIVES:")
+                                    for fp in fp_list[:5]:
+                                        orig = fp.get("original", {})
+                                        desc = orig.get("description", "Unknown")[:50]
+                                        reason = fp.get("validation_method", "Unknown")
+                                        evidence = fp.get("evidence", "")[:60]
+                                        print(f"   • {desc}")
+                                        print(f"     Reason: {reason}")
+                                        if evidence:
+                                            print(f"     Evidence: {evidence}")
+                                    if len(fp_list) > 5:
+                                        print(f"   ... and {len(fp_list) - 5} more")
+                                
+                                if validation.get("validated"):
+                                    confirmed = validation['validated']
+                                    print(f"\n[BLACK] ✓ CONFIRMED {len(confirmed)} REAL FINDINGS:")
+                                    for v in confirmed[:5]:
+                                        orig = v.get("original", {})
+                                        sev = orig.get("severity", "?")
+                                        desc = orig.get("description", "Unknown")[:50]
+                                        conf = v.get("confidence", "?")
+                                        print(f"   [{sev}] {desc} (Confidence: {conf})")
                     except Exception as e:
                         pass
                     
