@@ -122,18 +122,97 @@ class SecretsModule(BaseModule):
                 evidence=f"Values: {', '.join(masked)}"
             )
     
+    spa_indicators = [
+        "<!doctype html",
+        "<html",
+        "<head>",
+        "<script",
+        "ng-app",
+        "ng-controller",
+        "__next",
+        "__nuxt",
+        "data-reactroot",
+        "data-react",
+        "__vue__",
+        "app-root",
+        "<app-root>",
+        "<router-outlet>",
+        "window.__INITIAL_STATE__",
+        "window.__NUXT__",
+        "window.__NEXT_DATA__",
+    ]
+    
+    file_content_patterns = {
+        ".env": [r'^[A-Z_]+=', r'^\s*#', r'DATABASE_URL=', r'API_KEY=', r'SECRET='],
+        ".yml": [r'^\s*[a-z_]+:', r'---', r'^\s*-\s+'],
+        ".yaml": [r'^\s*[a-z_]+:', r'---', r'^\s*-\s+'],
+        ".json": [r'^\s*\{', r'^\s*\[', r'"[^"]+"\s*:'],
+        ".xml": [r'<\?xml', r'<[a-zA-Z]+>', r'</[a-zA-Z]+>'],
+        ".properties": [r'^[a-z._]+=', r'^\s*#'],
+        ".php": [r'<\?php', r'\$[a-zA-Z_]+\s*='],
+        ".htpasswd": [r'^[a-zA-Z0-9_]+:\$', r'^[a-zA-Z0-9_]+:\{'],
+        "id_rsa": [r'-----BEGIN', r'PRIVATE KEY'],
+        "id_dsa": [r'-----BEGIN', r'PRIVATE KEY'],
+        "id_ecdsa": [r'-----BEGIN', r'PRIVATE KEY'],
+        "authorized_keys": [r'^ssh-rsa ', r'^ssh-ed25519 ', r'^ecdsa-sha'],
+        ".history": [r'^[a-z]+\s', r'^cd\s', r'^ls\s', r'^cat\s', r'^sudo\s'],
+        "credentials": [r'\[default\]', r'aws_access_key_id', r'aws_secret_access_key'],
+        ".npmrc": [r'^//registry', r'_authToken=', r'^registry='],
+        ".netrc": [r'^machine\s', r'login\s', r'password\s'],
+        ".docker/config.json": [r'"auths"', r'"auth":', r'"https://'],
+    }
+    
+    def _is_spa_response(self, content):
+        lower_content = content.lower()[:2000]
+        spa_score = sum(1 for indicator in self.spa_indicators if indicator.lower() in lower_content)
+        return spa_score >= 2
+    
+    def _validate_file_content(self, path, content):
+        if self._is_spa_response(content):
+            return False, "SPA fallback detected"
+        
+        for ext, patterns in self.file_content_patterns.items():
+            if ext in path.lower():
+                matches = sum(1 for p in patterns if re.search(p, content[:1000], re.MULTILINE | re.IGNORECASE))
+                if matches >= 1:
+                    return True, f"Content matches {ext} pattern ({matches} indicators)"
+                return False, f"Content doesn't match expected {ext} format"
+        
+        if any(c in content[:500] for c in ['=', ':', '{', 'password', 'secret', 'key', 'token']):
+            return True, "Contains config-like content"
+        
+        return False, "Unknown format, no validation"
+    
     async def _scan_sensitive_files(self, base_url):
+        baseline_resp = await self.http.get(f"{base_url}/this-path-should-not-exist-abc123xyz")
+        baseline_size = len(baseline_resp.get("text", "")) if baseline_resp.get("status") == 200 else 0
+        baseline_is_spa = self._is_spa_response(baseline_resp.get("text", "")) if baseline_resp.get("status") == 200 else False
+        
         for path in self.sensitive_files:
             url = f"{base_url}{path}"
             resp = await self.http.get(url)
             
-            if resp.get("status") == 200 and len(resp.get("text", "")) > 10:
-                if "<!doctype html" not in resp["text"].lower()[:100]:
-                    self.add_finding(
-                        "CRITICAL",
-                        f"Sensitive file exposed: {path}",
-                        url=url,
-                        evidence=f"Size: {len(resp['text'])} bytes"
-                    )
-                    
-                    await self._scan_content(url, resp["text"])
+            if resp.get("status") != 200:
+                continue
+            
+            content = resp.get("text", "")
+            content_len = len(content)
+            
+            if content_len < 10:
+                continue
+            
+            if baseline_is_spa and abs(content_len - baseline_size) < 100:
+                continue
+            
+            is_valid, validation_msg = self._validate_file_content(path, content)
+            
+            if is_valid:
+                content_type = resp.get("headers", {}).get("content-type", "unknown")
+                self.add_finding(
+                    "CRITICAL",
+                    f"Sensitive file exposed: {path}",
+                    url=url,
+                    evidence=f"Size: {content_len} bytes | Validation: {validation_msg} | Type: {content_type}",
+                    confidence="HIGH"
+                )
+                await self._scan_content(url, content)

@@ -2344,6 +2344,104 @@ print("Scan complete.")
                         print(f"    - {f.get('technique')}")
                 continue
             
+            import re
+            url_match = re.search(r'(https?://[^\s]+)', user_input)
+            is_scan_request = any(kw in user_input.lower() for kw in ['scan', 'test', 'check', 'analyze', 'audit', 'pentest'])
+            
+            if url_match and is_scan_request:
+                target_url = url_match.group(1)
+                modules = []
+                lower_input = user_input.lower()
+                
+                if 'sql' in lower_input or 'sqli' in lower_input:
+                    modules.append('sqli')
+                if 'xss' in lower_input or 'cross-site' in lower_input:
+                    modules.append('xss')
+                if 'js' in lower_input or 'javascript' in lower_input or 'baas' in lower_input:
+                    pass
+                if 'secret' in lower_input or 'credential' in lower_input:
+                    modules.append('secrets')
+                if 'auth' in lower_input:
+                    modules.extend(['auth', 'jwt', 'session'])
+                if 'api' in lower_input:
+                    modules.extend(['api', 'graphql'])
+                if 'all' in lower_input or 'full' in lower_input or 'comprehensive' in lower_input:
+                    modules = ['sqli', 'xss', 'ssrf', 'lfi', 'secrets', 'headers', 'cors', 'auth']
+                
+                if not modules:
+                    modules = ['sqli', 'xss', 'secrets', 'headers']
+                
+                print(f"\n[BLACK] Initiating LANTERN scan on {target_url}")
+                print(f"[BLACK] Modules: {', '.join(modules)}")
+                print(f"[BLACK] JavaScript analysis: ENABLED")
+                print(f"\n{'='*60}")
+                
+                extra_args = []
+                timeout = 300
+                
+                if 'exploit' in lower_input or 'aggressive' in lower_input:
+                    extra_args.append("--exploit")
+                    timeout += 300
+                if 'deep' in lower_input or 'thorough' in lower_input:
+                    extra_args.append("--deep")
+                    timeout += 300
+                if 'crawl' in lower_input or 'spider' in lower_input:
+                    extra_args.append("--crawl")
+                    timeout += 600
+                if len(modules) > 5:
+                    timeout += len(modules) * 60
+                
+                print(f"[BLACK] Timeout: {timeout//60} minutes")
+                
+                result = agent.run_lantern_scan(target_url, modules=modules, extra_args=extra_args, timeout=timeout)
+                
+                if result.get("success"):
+                    print(f"\n[BLACK] Scan complete!")
+                    stdout = result.get("stdout") or ""
+                    stderr = result.get("stderr") or ""
+                    output = stdout + stderr
+                    if output:
+                        for line in output.split('\n'):
+                            if line.strip():
+                                print(f"  {line}")
+                    
+                    report_path = f"reports/scan_{target_url.replace('://', '_').replace('/', '_').replace(':', '_')[:30]}.json"
+                    try:
+                        import json
+                        from pathlib import Path
+                        json_path = Path(__file__).parent.parent.parent / report_path
+                        if json_path.exists():
+                            with open(json_path) as f:
+                                report_data = json.load(f)
+                            findings = report_data.get("findings", [])
+                            if findings:
+                                print(f"\n[BLACK] Validating {len(findings)} findings...")
+                                validation = asyncio.run(agent.validate_findings(findings))
+                                stats = validation.get("stats", {})
+                                print(f"\n{'─'*40}")
+                                print(f"  VALIDATION RESULTS")
+                                print(f"{'─'*40}")
+                                print(f"  Total findings:    {stats.get('total', 0)}")
+                                print(f"  Confirmed:         {stats.get('confirmed', 0)}")
+                                print(f"  False positives:   {stats.get('false_positives', 0)}")
+                                print(f"  Needs review:      {stats.get('needs_review', 0)}")
+                                print(f"  Accuracy estimate: {stats.get('accuracy_estimate', 'N/A')}")
+                                print(f"{'─'*40}")
+                                
+                                if validation.get("false_positives"):
+                                    print(f"\n[BLACK] Filtered {len(validation['false_positives'])} false positives (SPA fallbacks, HTML responses)")
+                    except Exception as e:
+                        pass
+                    
+                    if output and ("CRITICAL" in output or "HIGH" in output):
+                        print(f"\n[BLACK] VULNERABILITIES FOUND! Check the reports folder.")
+                else:
+                    error_msg = result.get('error') or result.get('stderr') or 'Unknown error'
+                    print(f"\n[BLACK] Scan issue: {error_msg}")
+                
+                print(f"\n{'='*60}")
+                continue
+            
             print("\n[BLACK] Thinking...", end=" ", flush=True)
             
             response = asyncio.run(agent.think(user_input))
@@ -2353,9 +2451,22 @@ print("Scan complete.")
             
             response = response.split("<|")[0].strip()
             
-            import re
             exec_matches = re.findall(r"execute_command\(['\"](.+?)['\"]\)", response)
             nmap_matches = re.findall(r"nmap\s+([^\s'\"]+)", response)
+            lantern_matches = re.findall(r'run_lantern_scan\(["\']([^"\']+)["\'](?:,\s*modules=\[([^\]]+)\])?', response)
+            
+            if lantern_matches:
+                for match in lantern_matches:
+                    target = match[0]
+                    modules_str = match[1] if len(match) > 1 and match[1] else ""
+                    modules = [m.strip().strip('"\'') for m in modules_str.split(',')] if modules_str else ['sqli', 'xss']
+                    print(f"\n[BLACK] Executing LANTERN scan: {target}")
+                    result = agent.run_lantern_scan(target, modules=modules)
+                    if result.get("success"):
+                        stdout = result.get("stdout", "")
+                        print(f"[SCAN OUTPUT]\n{stdout[:2000]}")
+                    else:
+                        print(f"[ERROR] {result.get('error', 'Scan failed')}")
             
             if exec_matches:
                 for cmd in exec_matches:

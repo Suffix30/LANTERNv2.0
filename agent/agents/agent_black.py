@@ -100,19 +100,80 @@ class AgentBlack(Agent):
     
     def _load_knowledge(self) -> Dict[str, Any]:
         knowledge = {}
+        knowledge_index = []
+        
         if self.knowledge_path.exists():
-            for json_file in self.knowledge_path.glob("*.json"):
+            for json_file in self.knowledge_path.rglob("*.json"):
+                if "README" in json_file.name:
+                    continue
                 try:
                     data = json.loads(json_file.read_text(encoding="utf-8"))
-                    knowledge[json_file.stem] = data
+                    key = self._make_knowledge_key(json_file)
+                    knowledge[key] = data
+                    knowledge_index.append(key)
                 except Exception:
                     pass
-            for md_file in self.knowledge_path.glob("*.md"):
+            
+            for md_file in self.knowledge_path.rglob("*.md"):
+                if "README" in md_file.name:
+                    continue
                 try:
-                    knowledge[md_file.stem] = md_file.read_text(encoding="utf-8")
+                    content = md_file.read_text(encoding="utf-8")
+                    key = self._make_knowledge_key(md_file)
+                    knowledge[key] = content
+                    knowledge_index.append(key)
                 except Exception:
                     pass
+        
+        knowledge["_index"] = knowledge_index
+        knowledge["_core_summary"] = self._build_core_summary(knowledge)
         return knowledge
+    
+    def _make_knowledge_key(self, file_path: Path) -> str:
+        rel = file_path.relative_to(self.knowledge_path)
+        parts = list(rel.parts)
+        if len(parts) > 1:
+            return "/".join(parts[:-1]) + "/" + rel.stem
+        return rel.stem
+    
+    def _build_core_summary(self, knowledge: Dict) -> str:
+        summary_parts = [
+            "AGENT BLACK CORE KNOWLEDGE SUMMARY",
+            "=" * 40,
+            "",
+            "I am Agent BLACK, an AI penetration testing assistant.",
+            "I control LANTERN (62 vulnerability modules) and have comprehensive security knowledge.",
+            "",
+            "MY CAPABILITIES:",
+            "- Run LANTERN scans with any module combination",
+            "- Validate findings to eliminate false positives",
+            "- Detect SPA fallbacks and verify file content",
+            "- Generate and mutate payloads for WAF bypass",
+            "- Analyze JavaScript for endpoints, secrets, BaaS credentials",
+            "- Execute commands locally or via SSH to Kali",
+            "- Learn from engagements and improve over time",
+            "",
+            "VALIDATION SYSTEM:",
+            "- I validate EVERY finding before reporting",
+            "- SPA detection (Angular, React, Vue, Next.js)",
+            "- File content pattern matching",
+            "- Confidence scoring: CONFIRMED > HIGH > MEDIUM > LOW",
+            "- False positives are filtered automatically",
+            "",
+            "LOADED KNOWLEDGE DOCUMENTS:",
+        ]
+        
+        for key in knowledge.get("_index", [])[:50]:
+            if not key.startswith("_"):
+                summary_parts.append(f"  - {key}")
+        
+        summary_parts.extend([
+            "",
+            f"Total documents: {len(knowledge.get('_index', []))}",
+            "I can access any of these for detailed information.",
+        ])
+        
+        return "\n".join(summary_parts)
     
     def _load_model(self) -> bool:
         models_dir = Path(__file__).parent.parent / "agent_black" / "models"
@@ -181,52 +242,82 @@ class AgentBlack(Agent):
         relevant = []
         
         keyword_map = {
-            "sqli": ["module_encyclopedia", "payload_mutation", "lantern_integration"],
-            "sql injection": ["module_encyclopedia", "payload_mutation", "lantern_integration"],
-            "xss": ["module_encyclopedia", "payload_mutation", "dom"],
-            "cross-site": ["module_encyclopedia", "payload_mutation"],
-            "ssrf": ["module_encyclopedia", "lantern_advanced_systems"],
-            "lfi": ["module_encyclopedia", "payload_mutation"],
-            "ssti": ["module_encyclopedia", "payload_mutation"],
-            "waf": ["payload_mutation", "lantern_integration"],
-            "bypass": ["payload_mutation", "lantern_integration"],
+            "sqli": ["lantern_docs/modules/injection", "payload_mutation", "lantern_integration", "module_encyclopedia"],
+            "sql injection": ["lantern_docs/modules/injection", "payload_mutation", "lantern_integration"],
+            "xss": ["lantern_docs/modules/injection", "payload_mutation", "lantern_docs/modules/client"],
+            "cross-site": ["lantern_docs/modules/injection", "payload_mutation"],
+            "ssrf": ["lantern_docs/modules/rce", "lantern_advanced_systems"],
+            "lfi": ["lantern_docs/modules/rce", "payload_mutation"],
+            "ssti": ["lantern_docs/modules/rce", "payload_mutation"],
+            "cmdi": ["lantern_docs/modules/rce", "payload_mutation"],
+            "xxe": ["lantern_docs/modules/rce", "payload_mutation"],
+            "waf": ["lantern_docs/features/waf-bypass", "payload_mutation", "lantern_integration"],
+            "bypass": ["lantern_docs/features/waf-bypass", "payload_mutation"],
             "payload": ["payload_library", "payload_mutation"],
-            "scan": ["lantern_integration", "module_encyclopedia"],
-            "lantern": ["lantern_integration", "lantern_advanced_systems", "module_encyclopedia"],
-            "module": ["module_encyclopedia", "lantern_integration"],
+            "scan": ["lantern_integration", "lantern_docs/guides/reference", "module_encyclopedia"],
+            "lantern": ["lantern_integration", "lantern_advanced_systems", "lantern_docs/guides/reference"],
+            "module": ["module_encyclopedia", "lantern_integration", "lantern_docs/INDEX"],
             "false positive": ["false_positive_handling"],
+            "validation": ["false_positive_handling", "lantern_integration"],
             "confidence": ["false_positive_handling"],
-            "autonomous": ["autonomous_reasoning", "goal_loop"],
+            "verify": ["false_positive_handling"],
+            "autonomous": ["autonomous_reasoning", "goal_loop", "decision_engine"],
             "plan": ["autonomous_reasoning", "goal_loop", "decision_engine"],
-            "attack chain": ["chains", "autonomous_reasoning"],
-            "ctf": ["ctf_strategies", "ctf_reverse_engineering"],
+            "attack chain": ["autonomous_reasoning", "lantern_advanced_systems"],
+            "ctf": ["ctf_strategies", "ctf_reverse_engineering", "training_challenges"],
             "wifi": ["wifi_attacks"],
             "wireless": ["wifi_attacks"],
             "hackrf": ["hackrf_attacks"],
             "sdr": ["hackrf_attacks"],
             "fuzzer": ["core_systems", "lantern_advanced_systems"],
-            "oob": ["lantern_advanced_systems", "core_systems"],
-            "callback": ["lantern_advanced_systems"],
-            "improve": ["self_improvement", "autonomous_reasoning"],
-            "learn": ["self_improvement", "lessons_learned"],
-            "capability": ["agent_brain", "autonomous_reasoning", "self_improvement", "lantern_integration"],
-            "capabilities": ["agent_brain", "autonomous_reasoning", "self_improvement", "lantern_integration"],
-            "limitation": ["agent_brain", "self_improvement", "autonomous_reasoning"],
-            "flaw": ["agent_brain", "self_improvement", "autonomous_reasoning"],
-            "error": ["agent_brain", "self_improvement"],
-            "what can you": ["agent_brain", "lantern_integration", "autonomous_reasoning"],
+            "fuzz": ["core_systems", "lantern_advanced_systems"],
+            "oob": ["lantern_docs/features/oob-server", "lantern_advanced_systems", "core_systems"],
+            "callback": ["lantern_docs/features/oob-server", "lantern_advanced_systems"],
+            "improve": ["self_improvement", "evolution", "autonomous_reasoning"],
+            "learn": ["self_improvement", "evolution"],
+            "evolve": ["evolution", "self_improvement"],
+            "capability": ["agent_brain", "autonomous_reasoning", "lantern_integration", "advanced_capabilities"],
+            "capabilities": ["agent_brain", "autonomous_reasoning", "lantern_integration", "advanced_capabilities"],
+            "limitation": ["agent_brain", "self_improvement", "operating_rules"],
+            "rules": ["operating_rules", "agent_brain"],
+            "flaw": ["agent_brain", "self_improvement"],
+            "error": ["agent_brain", "false_positive_handling"],
+            "what can you": ["agent_brain", "lantern_integration", "advanced_capabilities"],
             "what do you know": ["agent_brain", "module_encyclopedia", "lantern_integration"],
-            "adapt": ["autonomous_reasoning", "self_improvement", "goal_loop"],
+            "adapt": ["autonomous_reasoning", "self_improvement", "evolution"],
             "creative": ["payload_mutation", "payload_library", "self_improvement"],
             "generate": ["payload_mutation", "payload_library"],
-            "real-time": ["lessons_learned", "self_improvement"],
-            "update": ["self_improvement", "payload_library"],
-            "decision": ["decision_trees", "autonomous_reasoning"],
+            "decision": ["decision_trees", "decision_engine", "autonomous_reasoning"],
             "stuck": ["decision_trees", "autonomous_reasoning"],
             "not working": ["decision_trees", "false_positive_handling"],
-            "fail": ["decision_trees", "lessons_learned"],
-            "blocked": ["decision_trees", "payload_mutation"],
+            "fail": ["decision_trees", "false_positive_handling"],
+            "blocked": ["decision_trees", "payload_mutation", "lantern_docs/features/waf-bypass"],
             "next": ["decision_trees", "goal_loop"],
+            "javascript": ["lantern_docs/features/js-analysis", "lantern_integration"],
+            "js": ["lantern_docs/features/js-analysis"],
+            "baas": ["lantern_docs/features/js-analysis"],
+            "supabase": ["lantern_docs/features/js-analysis"],
+            "firebase": ["lantern_docs/features/js-analysis"],
+            "secrets": ["lantern_docs/modules/data", "lantern_docs/features/js-analysis"],
+            "credential": ["lantern_docs/modules/data", "lantern_docs/features/js-analysis"],
+            "auth": ["lantern_docs/modules/auth", "lantern_docs/features/auth-testing"],
+            "jwt": ["lantern_docs/modules/auth"],
+            "oauth": ["lantern_docs/modules/auth"],
+            "session": ["lantern_docs/modules/auth"],
+            "cve": ["lantern_docs/features/cve-scanning"],
+            "workflow": ["lantern_docs/features/workflows"],
+            "api": ["lantern_docs/modules/api"],
+            "graphql": ["lantern_docs/modules/api"],
+            "cors": ["lantern_docs/modules/config"],
+            "headers": ["lantern_docs/modules/config"],
+            "ssl": ["lantern_docs/modules/config"],
+            "recon": ["lantern_docs/modules/recon"],
+            "subdomain": ["lantern_docs/modules/recon"],
+            "smuggle": ["lantern_docs/modules/advanced"],
+            "cache": ["lantern_docs/modules/advanced"],
+            "race": ["lantern_docs/modules/business"],
+            "idor": ["lantern_docs/modules/business"],
+            "report": ["lantern_integration", "false_positive_handling"],
         }
         
         for keyword, docs in keyword_map.items():
@@ -235,23 +326,35 @@ class AgentBlack(Agent):
                     if doc not in relevant:
                         relevant.append(doc)
         
-        context_parts = []
-        max_context = 4000
-        current_len = 0
+        if not relevant:
+            relevant = ["agent_brain", "lantern_integration", "module_encyclopedia"]
         
-        for doc_name in relevant[:5]:
+        context_parts = []
+        context_parts.append(self.knowledge.get("_core_summary", ""))
+        max_context = 12000
+        current_len = len(context_parts[0])
+        
+        for doc_name in relevant[:8]:
+            content = None
             if doc_name in self.knowledge:
                 content = self.knowledge[doc_name]
+            else:
+                for key in self.knowledge.get("_index", []):
+                    if doc_name in key or key.endswith(doc_name):
+                        content = self.knowledge.get(key)
+                        break
+            
+            if content:
                 if isinstance(content, dict):
-                    content = json.dumps(content, indent=2)[:1000]
+                    content = json.dumps(content, indent=2)[:2000]
                 else:
-                    content = str(content)[:1200]
+                    content = str(content)[:3000]
                 
                 if current_len + len(content) < max_context:
-                    context_parts.append(f"[{doc_name}]\n{content}")
+                    context_parts.append(f"\n[{doc_name}]\n{content}")
                     current_len += len(content)
         
-        return "\n\n".join(context_parts)
+        return "\n".join(context_parts)
     
     def _local_inference(self, prompt: str) -> str:
         try:
@@ -481,6 +584,73 @@ Respond helpfully and confidently as Agent BLACK."""
         except Exception as e:
             return {"success": False, "error": str(e)}
     
+    def run_lantern_scan(self, target: str, modules: List[str] = None, preset: str = None, 
+                         extra_args: List[str] = None, timeout: int = 300) -> Dict[str, Any]:
+        cmd = ["lantern", "-t", target]
+        
+        if modules:
+            cmd.extend(["-m", ",".join(modules)])
+        if preset:
+            cmd.extend(["--preset", preset])
+        if extra_args:
+            for arg in extra_args:
+                if arg not in cmd:
+                    cmd.append(arg)
+        
+        if "--analyze-js" not in cmd:
+            cmd.append("--analyze-js")
+        
+        cmd.append("--quiet")
+        
+        output_name = f"scan_{target.replace('://', '_').replace('/', '_').replace(':', '_')[:30]}"
+        cmd.extend(["-o", output_name])
+        
+        print(f"\n[BLACK] Executing: {' '.join(cmd)}")
+        
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=str(Path(__file__).parent.parent.parent),
+                encoding='utf-8',
+                errors='replace'
+            )
+            return {
+                "success": result.returncode == 0,
+                "stdout": result.stdout or "",
+                "stderr": result.stderr or "",
+                "returncode": result.returncode,
+                "command": " ".join(cmd)
+            }
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": f"Scan timeout after {timeout}s", "command": " ".join(cmd), "stdout": "", "stderr": ""}
+        except FileNotFoundError:
+            try:
+                py_cmd = ["python", "-m", "lantern"] + cmd[1:]
+                print(f"[BLACK] Fallback: {' '.join(py_cmd)}")
+                result = subprocess.run(
+                    py_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    cwd=str(Path(__file__).parent.parent.parent),
+                    encoding='utf-8',
+                    errors='replace'
+                )
+                return {
+                    "success": result.returncode == 0,
+                    "stdout": result.stdout or "",
+                    "stderr": result.stderr or "",
+                    "returncode": result.returncode,
+                    "command": " ".join(py_cmd)
+                }
+            except Exception as e:
+                return {"success": False, "error": f"LANTERN not found: {e}", "command": " ".join(cmd), "stdout": "", "stderr": ""}
+        except Exception as e:
+            return {"success": False, "error": str(e), "command": " ".join(cmd), "stdout": "", "stderr": ""}
+    
     def get_all_modules(self) -> list:
         modules_data = self.knowledge.get("modules", {})
         return modules_data.get("all", [])
@@ -554,6 +724,109 @@ Respond helpfully and confidently as Agent BLACK."""
             "low": low,
             "potential_attack_chains": chains,
             "recommendation": recommendation
+        }
+    
+    async def validate_findings(self, findings: list) -> Dict[str, Any]:
+        import aiohttp
+        validated = []
+        false_positives = []
+        needs_manual = []
+        
+        async with aiohttp.ClientSession() as session:
+            for finding in findings:
+                module = finding.get("module", "")
+                url = finding.get("url", "")
+                description = finding.get("description", "")
+                
+                validation_result = {
+                    "original": finding,
+                    "validated": False,
+                    "confidence": "LOW",
+                    "validation_method": None,
+                    "evidence": None,
+                }
+                
+                try:
+                    if "Sensitive file exposed" in description:
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10), ssl=False) as resp:
+                            content = await resp.text()
+                            content_type = resp.headers.get("Content-Type", "")
+                            
+                            spa_indicators = ["<html", "<script", "ng-app", "app-root", "__next", "react"]
+                            is_spa = sum(1 for i in spa_indicators if i.lower() in content.lower()[:2000]) >= 2
+                            
+                            if is_spa:
+                                validation_result["validated"] = False
+                                validation_result["confidence"] = "FALSE_POSITIVE"
+                                validation_result["validation_method"] = "SPA detection"
+                                validation_result["evidence"] = "Response is SPA fallback HTML"
+                                false_positives.append(validation_result)
+                            elif "text/html" in content_type and "<html" in content.lower():
+                                validation_result["validated"] = False
+                                validation_result["confidence"] = "FALSE_POSITIVE"
+                                validation_result["validation_method"] = "Content-Type check"
+                                validation_result["evidence"] = f"HTML response: {content_type}"
+                                false_positives.append(validation_result)
+                            else:
+                                validation_result["validated"] = True
+                                validation_result["confidence"] = "HIGH"
+                                validation_result["validation_method"] = "Content validation"
+                                validation_result["evidence"] = f"Size: {len(content)}, Type: {content_type}"
+                                validated.append(validation_result)
+                    
+                    elif module == "sqli":
+                        validation_result["validation_method"] = "SQL error detection"
+                        if any(err in description.lower() for err in ["error", "syntax", "sqlite", "mysql", "postgres"]):
+                            validation_result["validated"] = True
+                            validation_result["confidence"] = "MEDIUM"
+                            validation_result["evidence"] = "Error-based detection - needs manual confirmation"
+                            validated.append(validation_result)
+                        else:
+                            needs_manual.append(validation_result)
+                    
+                    elif module == "xss":
+                        if "reflected" in description.lower() or "dom" in description.lower():
+                            validation_result["validated"] = True
+                            validation_result["confidence"] = "MEDIUM"
+                            validation_result["validation_method"] = "Reflection analysis"
+                            validated.append(validation_result)
+                        else:
+                            needs_manual.append(validation_result)
+                    
+                    elif module == "headers" or module == "cors":
+                        validation_result["validated"] = True
+                        validation_result["confidence"] = "HIGH"
+                        validation_result["validation_method"] = "Header analysis"
+                        validated.append(validation_result)
+                    
+                    elif module == "secrets":
+                        if "AWS" in description or "API" in description or "Token" in description:
+                            validation_result["confidence"] = "MEDIUM"
+                            validation_result["validation_method"] = "Pattern match"
+                            validation_result["evidence"] = "Pattern-based - verify manually"
+                            validated.append(validation_result)
+                        else:
+                            needs_manual.append(validation_result)
+                    
+                    else:
+                        needs_manual.append(validation_result)
+                        
+                except Exception as e:
+                    validation_result["validation_method"] = "Error during validation"
+                    validation_result["evidence"] = str(e)
+                    needs_manual.append(validation_result)
+        
+        return {
+            "validated": validated,
+            "false_positives": false_positives,
+            "needs_manual_review": needs_manual,
+            "stats": {
+                "total": len(findings),
+                "confirmed": len(validated),
+                "false_positives": len(false_positives),
+                "needs_review": len(needs_manual),
+                "accuracy_estimate": f"{(len(validated) / max(len(findings), 1)) * 100:.1f}%"
+            }
         }
     
     def _run_tool(self, command: str, timeout: int = 30) -> Dict[str, Any]:

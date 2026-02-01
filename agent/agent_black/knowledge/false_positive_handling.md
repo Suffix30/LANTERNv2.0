@@ -349,6 +349,117 @@ When reporting to operator:
 
 ---
 
+## Automated Validation System
+
+I have built-in validation that runs automatically after every LANTERN scan.
+
+### SPA Detection (Single Page Applications)
+
+Modern SPAs (Angular, React, Vue, Next.js) return the same HTML for ANY route.
+This causes massive false positives when scanning for sensitive files.
+
+**SPA Indicators I Detect:**
+```python
+spa_indicators = [
+    "<!doctype html", "<html", "<head>", "<script",
+    "ng-app", "ng-controller",           # Angular
+    "__next", "__NEXT_DATA__",            # Next.js
+    "__nuxt", "__NUXT__",                 # Nuxt.js
+    "data-reactroot", "data-react",       # React
+    "__vue__",                            # Vue
+    "app-root", "<app-root>",             # Angular
+    "<router-outlet>",                    # Angular Router
+    "window.__INITIAL_STATE__",           # SSR hydration
+]
+```
+
+**My Validation Process:**
+1. Request a nonsense path (baseline): `GET /this-path-should-not-exist-abc123`
+2. If baseline returns 200 with HTML, app is SPA
+3. For each "sensitive file" finding:
+   - Compare response size to baseline
+   - Check if response contains 2+ SPA indicators
+   - If matches baseline or is SPA HTML → **FALSE POSITIVE**
+
+### File Content Validation
+
+Each sensitive file type has expected content patterns:
+
+| File Type | Expected Content |
+|-----------|------------------|
+| `.env` | `KEY=value`, `#` comments, `DATABASE_URL=` |
+| `.yml/.yaml` | `key:`, `---`, `- item` |
+| `.json` | `{`, `[`, `"key":` |
+| `.xml` | `<?xml`, `<tag>`, `</tag>` |
+| `.properties` | `key.name=value`, `#` comments |
+| `id_rsa` | `-----BEGIN`, `PRIVATE KEY` |
+| `.htpasswd` | `user:$hash` |
+
+If response doesn't match expected patterns → **FALSE POSITIVE**
+
+### The validate_findings() Method
+
+After every scan, I call `validate_findings()` which:
+
+```python
+async def validate_findings(findings):
+    for finding in findings:
+        if "Sensitive file exposed" in finding["description"]:
+            response = await fetch(finding["url"])
+            
+            if is_spa_response(response):
+                mark_false_positive(finding, "SPA fallback detected")
+            elif "text/html" in content_type:
+                mark_false_positive(finding, "HTML response, not file")
+            else:
+                mark_confirmed(finding)
+        
+        elif finding["module"] == "sqli":
+            if has_sql_error_indicators(finding):
+                mark_high_confidence(finding)
+            else:
+                mark_needs_review(finding)
+        
+        # ... similar for other modules
+    
+    return {
+        "confirmed": confirmed_list,
+        "false_positives": fp_list,
+        "needs_review": review_list,
+        "stats": { ... }
+    }
+```
+
+### Validation Output
+
+After every scan, I report:
+```
+────────────────────────────────────────
+  VALIDATION RESULTS
+────────────────────────────────────────
+  Total findings:    348
+  Confirmed:         156
+  False positives:   120
+  Needs review:      72
+  Accuracy estimate: 44.8%
+────────────────────────────────────────
+
+[BLACK] Filtered 120 false positives (SPA fallbacks, HTML responses)
+```
+
+### When Validation Upgrades Findings
+
+I can upgrade confidence during validation:
+
+| Original | Validation Result | New Confidence |
+|----------|-------------------|----------------|
+| MEDIUM SQLi | SQL error in response | HIGH |
+| MEDIUM XSS | Reflection confirmed | HIGH |
+| LOW secrets | Pattern matches real credential | MEDIUM |
+| CRITICAL file | SPA fallback detected | FALSE_POSITIVE |
+
+---
+
 ## Summary: My False Positive Philosophy
 
 1. **Never report LOW confidence as high severity**
@@ -357,6 +468,9 @@ When reporting to operator:
 4. **Tell operator what's needed for confirmation**
 5. **Use OOB callbacks when possible - they're definitive**
 6. **Track false positives to improve over time**
+7. **Validate every finding before final report**
+8. **Detect SPA fallbacks automatically**
+9. **Check file content matches expected format**
 
 The goal is: every finding I report should be real. Operator should trust
 that if I say CONFIRMED, it's exploitable.

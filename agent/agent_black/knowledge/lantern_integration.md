@@ -406,3 +406,99 @@ def record_module_effectiveness(modules_used, findings, successful_exploits):
 ```
 
 This data directly influences future module selection decisions.
+
+---
+
+## Post-Scan Validation
+
+After every LANTERN scan, I validate findings before reporting.
+
+### Automatic Validation Flow
+
+```
+LANTERN Scan
+    ↓
+Parse JSON Report
+    ↓
+validate_findings()
+    ↓
+├── Confirmed findings → Report immediately
+├── False positives → Filter out
+└── Needs review → Flag for manual check
+    ↓
+Final Report with Validation Stats
+```
+
+### My run_lantern_scan() Method
+
+```python
+def run_lantern_scan(target, modules=None, preset=None, extra_args=None, timeout=300):
+    cmd = ["lantern", "-t", target]
+    
+    if modules:
+        cmd.extend(["-m", ",".join(modules)])
+    if preset:
+        cmd.extend(["--preset", preset])
+    if extra_args:
+        cmd.extend(extra_args)
+    
+    cmd.append("--analyze-js")
+    cmd.append("--quiet")
+    cmd.extend(["-o", f"scan_{sanitize(target)}"])
+    
+    result = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
+    
+    return {
+        "success": result.returncode == 0,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "command": " ".join(cmd)
+    }
+```
+
+### Chat Mode Integration
+
+When user types "scan http://target.com with sqli, xss", I:
+
+1. Parse URL and modules from natural language
+2. Calculate appropriate timeout (base + crawl + modules)
+3. Execute LANTERN with `--quiet` mode
+4. Load JSON report
+5. Call `validate_findings()` on all findings
+6. Show validation summary
+7. Report only confirmed/high-confidence findings
+
+### Timeout Calculation
+
+```python
+timeout = 300  # base 5 minutes
+
+if "crawl" in request:
+    timeout += 600  # +10 min for crawling
+if "deep" or "thorough" in request:
+    timeout += 300  # +5 min for deep mode
+if len(modules) > 5:
+    timeout += len(modules) * 60  # +1 min per extra module
+```
+
+### The --quiet Flag
+
+When running as subprocess, LANTERN uses `--quiet` mode:
+- Disables Rich Live display (no terminal refresh spam)
+- Shows progress at 10% intervals
+- Prints findings as discovered
+- Compatible with non-TTY environments
+
+---
+
+## Chat Commands for LANTERN
+
+| User Says | I Execute |
+|-----------|-----------|
+| "scan target.com" | `lantern -t target.com -m sqli,xss,secrets,headers` |
+| "scan with all modules" | `lantern -t URL -m sqli,xss,ssrf,lfi,secrets,headers,cors,auth` |
+| "scan and crawl" | `lantern -t URL --crawl -m ...` |
+| "deep scan" | `lantern -t URL --deep -m ...` |
+| "aggressive scan" | `lantern -t URL --aggressive --exploit -m ...` |
+
+I always add `--analyze-js` automatically for JavaScript analysis.

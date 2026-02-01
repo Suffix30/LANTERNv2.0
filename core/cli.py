@@ -1,5 +1,6 @@
 import argparse
 import sys
+import os
 import asyncio
 import aiofiles
 import yaml
@@ -13,9 +14,24 @@ from rich import box
 from core.engine import Scanner
 from core.reporter import Reporter
 
+if sys.platform == "win32":
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleOutputCP(65001)
+        kernel32.SetConsoleCP(65001)
+    except Exception:
+        pass
+    if hasattr(sys.stdout, 'reconfigure'):
+        try:
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
+
 PRESETS_DIR = Path(__file__).parent.parent / "presets"
 
-console = Console()
+console = Console(force_terminal=True, legacy_windows=False)
 
 BANNER = """[bold cyan]
  ██▓    ▄▄▄       ███▄    █ ▄▄▄█████▓▓█████  ██▀███   ███▄    █ 
@@ -115,6 +131,7 @@ def parse_args():
     parser.add_argument("--dns-wordlist", type=str, help="Custom wordlist for DNS brute force")
     parser.add_argument("--dns-concurrency", type=int, default=500, help="DNS brute force concurrency (default: 500)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
+    parser.add_argument("-q", "--quiet", action="store_true", help="Quiet mode (no live display, minimal output)")
     parser.add_argument("--ci", action="store_true", help="CI/CD mode with exit codes")
     parser.add_argument("--fail-on", choices=["CRITICAL", "HIGH", "MEDIUM", "LOW"], default="HIGH", help="Fail on severity (default: HIGH)")
     parser.add_argument("--sarif", type=str, help="Output SARIF report for GitHub/GitLab")
@@ -750,44 +767,62 @@ async def main():
     severity_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0}
     recent_findings = []
     
-    progress = Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        console=console,
-        transient=True,
-    )
-    task = progress.add_task("[cyan]Scanning...", total=total_tasks)
+    use_live = not getattr(args, 'quiet', False) and sys.stdout.isatty()
     
-    def make_display():
-        progress_pct = (completed_tasks / max(total_tasks, 1)) * 100
-        stats_panel = generate_stats_table(scanner, findings_count, severity_counts, progress_pct)
+    if use_live:
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+        )
+        task = progress.add_task("[cyan]Scanning...", total=total_tasks)
         
-        findings_lines = []
-        for f in recent_findings[-8:]:
-            color = {"CRITICAL": "bold red", "HIGH": "red", "MEDIUM": "yellow", "LOW": "blue", "INFO": "dim"}.get(f["severity"], "white")
-            findings_lines.append(f"[{color}][{f['severity']}][/] {f['module']}: {f['description'][:60]}")
+        def make_display():
+            progress_pct = (completed_tasks / max(total_tasks, 1)) * 100
+            stats_panel = generate_stats_table(scanner, findings_count, severity_counts, progress_pct)
+            
+            findings_lines = []
+            for f in recent_findings[-8:]:
+                color = {"CRITICAL": "bold red", "HIGH": "red", "MEDIUM": "yellow", "LOW": "blue", "INFO": "dim"}.get(f["severity"], "white")
+                findings_lines.append(f"[{color}][{f['severity']}][/] {f['module']}: {f['description'][:60]}")
+            
+            findings_text = "\n".join(findings_lines) if findings_lines else "[dim]No findings yet...[/]"
+            findings_panel = Panel(findings_text, title="Recent Findings", border_style="green", padding=(0, 1))
+            
+            return Group(stats_panel, progress, findings_panel)
         
-        findings_text = "\n".join(findings_lines) if findings_lines else "[dim]No findings yet...[/]"
-        findings_panel = Panel(findings_text, title="Recent Findings", border_style="green", padding=(0, 1))
-        
-        return Group(stats_panel, progress, findings_panel)
-    
-    with Live(make_display(), console=console, refresh_per_second=4, transient=True) as live:
+        with Live(make_display(), console=console, refresh_per_second=4, transient=True) as live:
+            async for update in scanner.run():
+                if update["type"] == "progress":
+                    completed_tasks += 1
+                    progress.update(task, completed=completed_tasks)
+                elif update["type"] == "finding":
+                    findings_count += 1
+                    severity_counts[update["severity"]] = severity_counts.get(update["severity"], 0) + 1
+                    recent_findings.append(update)
+                elif update["type"] == "status" and args.verbose:
+                    pass
+                
+                live.update(make_display())
+    else:
+        last_percent = -1
         async for update in scanner.run():
             if update["type"] == "progress":
                 completed_tasks += 1
-                progress.update(task, completed=completed_tasks)
+                percent = int((completed_tasks / max(total_tasks, 1)) * 100)
+                if percent >= last_percent + 10:
+                    print(f"[*] Progress: {percent}% ({completed_tasks}/{total_tasks})")
+                    last_percent = percent
             elif update["type"] == "finding":
                 findings_count += 1
                 severity_counts[update["severity"]] = severity_counts.get(update["severity"], 0) + 1
                 recent_findings.append(update)
-            elif update["type"] == "status" and args.verbose:
-                pass
-            
-            live.update(make_display())
+                sev = update["severity"]
+                print(f"[+] [{sev}] {update['module']}: {update['description'][:80]}")
     
     results = scanner.get_results()
     
