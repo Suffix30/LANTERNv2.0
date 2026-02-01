@@ -1,0 +1,34 @@
+name: "CodeQL Config for Security Testing Tool"
+
+paths-ignore:
+  - "**/*_test.py"
+  - "**/test_*.py"
+  - "lab/**"
+
+query-filters:
+  - exclude:
+      id: py/weak-cryptographic-algorithm
+      
+  - exclude:
+      id: py/insecure-protocol
+      
+  - exclude:
+      id: py/clear-text-logging-sensitive-data
+      
+  - exclude:
+      id: py/clear-text-storage-sensitive-data
+      
+  - exclude:
+      id: py/paramiko-missing-host-key-validation
+      
+  - exclude:
+      id: py/bind-socket-all-network-interfaces
+      
+  - exclude:
+      id: py/incomplete-url-substring-sanitization
+      
+  - exclude:
+      id: py/bad-tag-filter
+      
+  - exclude:
+      id: py/polynomial-redos
